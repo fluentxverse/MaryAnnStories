@@ -1,0 +1,17 @@
+.{
+    .name = .horizon,
+    .version = "0.1.7",
+    .fingerprint = 0x8a2bde44ce2ac69,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .zts = .{
+            .url = "https://github.com/zigster64/zts/archive/refs/heads/main.tar.gz",
+            .hash = "12207002bcfab825d1e3d22812397336de7286eeca57c7169798eb1fb9c7448f915f",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

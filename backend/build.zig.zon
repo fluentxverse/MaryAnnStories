@@ -1,0 +1,9 @@
+.{
+    .name = .maryannstories_backend,
+    .version = "0.1.0",
+    .fingerprint = 0x2a3d72be81e66712,
+    .dependencies = .{},
+    .paths = .{
+        "src",
+    },
+}

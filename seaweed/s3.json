@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "local-dev",
+      "accessKey": "maryann",
+      "secretKey": "maryann-local-secret"
+    }
+  ]
+}
