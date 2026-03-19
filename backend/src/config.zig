@@ -14,12 +14,19 @@ pub const DbConfig = struct {
 
 pub const Config = struct {
     port: u16,
+    session_secret: []const u8,
+    session_duration_seconds: i64,
     nullclaw_url: []const u8,
     nullclaw_bearer_token: ?[]const u8,
     openai_api_key: ?[]const u8,
     openai_base_url: []const u8,
     openai_story_model: []const u8,
     openai_image_model: []const u8,
+    openai_image_qa_model: []const u8,
+    gemini_api_key: ?[]const u8,
+    gemini_base_url: []const u8,
+    gemini_image_model: []const u8,
+    image_provider: []const u8,
     seaweed_filer_endpoint: []const u8,
     seaweed_public_url: []const u8,
     db: DbConfig,
@@ -38,6 +45,12 @@ pub fn load(allocator: std.mem.Allocator) !Config {
     try loadDotEnv(&env, allocator, "../.env");
 
     const listen_port = parseU16(env.get("PORT") orelse "4000", 4000);
+    const raw_session_secret = env.get("APP_SESSION_SECRET") orelse "mary-ann-stories-dev-session-secret";
+    const session_secret = if (raw_session_secret.len == 0)
+        "mary-ann-stories-dev-session-secret"
+    else
+        raw_session_secret;
+    const session_duration_hours = parseU32(env.get("SESSION_DURATION_HOURS") orelse "24", 24);
     const nullclaw_url = env.get("NULLCLAW_GATEWAY_URL") orelse "http://127.0.0.1:3000";
     const nullclaw_bearer_token = env.get("NULLCLAW_BEARER_TOKEN");
     const raw_openai_key = env.get("OPENAI_API_KEY");
@@ -48,6 +61,21 @@ pub fn load(allocator: std.mem.Allocator) !Config {
     const openai_base_url = env.get("OPENAI_BASE_URL") orelse "https://api.openai.com/v1";
     const openai_story_model = env.get("OPENAI_STORY_MODEL") orelse "gpt-5.2";
     const openai_image_model = env.get("OPENAI_IMAGE_MODEL") orelse "dall-e-3";
+    const openai_image_qa_model = env.get("OPENAI_IMAGE_QA_MODEL") orelse "gpt-4.1-mini";
+    const raw_gemini_key = env.get("GEMINI_API_KEY") orelse env.get("GOOGLE_API_KEY");
+    const gemini_api_key = if (raw_gemini_key) |key|
+        if (key.len == 0) null else key
+    else
+        null;
+    const gemini_base_url = env.get("GEMINI_BASE_URL") orelse "https://generativelanguage.googleapis.com/v1beta";
+    const gemini_image_model = env.get("GEMINI_IMAGE_MODEL") orelse "gemini-3-pro-image-preview";
+    const image_provider_env = env.get("IMAGE_PROVIDER") orelse "";
+    const image_provider = if (image_provider_env.len > 0)
+        image_provider_env
+    else if (gemini_api_key != null)
+        "gemini"
+    else
+        "openai";
     const seaweed_filer_endpoint = env.get("SEAWEED_FILER_ENDPOINT") orelse "";
     const seaweed_public_url = env.get("SEAWEED_PUBLIC_URL") orelse seaweed_filer_endpoint;
 
@@ -72,12 +100,19 @@ pub fn load(allocator: std.mem.Allocator) !Config {
 
     return .{
         .port = listen_port,
+        .session_secret = session_secret,
+        .session_duration_seconds = @as(i64, session_duration_hours) * 60 * 60,
         .nullclaw_url = nullclaw_url,
         .nullclaw_bearer_token = nullclaw_bearer_token,
         .openai_api_key = openai_api_key,
         .openai_base_url = openai_base_url,
         .openai_story_model = openai_story_model,
         .openai_image_model = openai_image_model,
+        .openai_image_qa_model = openai_image_qa_model,
+        .gemini_api_key = gemini_api_key,
+        .gemini_base_url = gemini_base_url,
+        .gemini_image_model = gemini_image_model,
+        .image_provider = image_provider,
         .seaweed_filer_endpoint = seaweed_filer_endpoint,
         .seaweed_public_url = seaweed_public_url,
         .db = .{

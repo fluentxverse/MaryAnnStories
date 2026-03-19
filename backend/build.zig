@@ -61,6 +61,14 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    const session_tests = b.addTest(.{
+        .root_source_file = b.path("src/auth/session.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_session_tests = b.addRunArtifact(session_tests);
+    b.step("test", "Run backend unit tests").dependOn(&run_session_tests.step);
+
     const run_cmd = b.addRunArtifact(exe);
     if (b.args) |args| {
         run_cmd.addArgs(args);

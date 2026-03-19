@@ -1,5 +1,6 @@
 const std = @import("std");
 const horizon = @import("horizon");
+const auth_route = @import("auth.zig");
 const state = @import("../state.zig");
 
 const ErrorResponse = struct {
@@ -86,10 +87,17 @@ pub fn upsert(context: *horizon.Context) horizon.Errors.Horizon!void {
     };
     defer parsed.deinit();
 
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
     const id = parsed.value.id orelse "";
-    const username = parsed.value.username orelse "";
-    if (id.len == 0 or username.len == 0) {
-        try respondError(context, .bad_request, "Story id and username are required");
+    const requested_username = parsed.value.username orelse "";
+    if (id.len == 0) {
+        try respondError(context, .bad_request, "Story id is required");
+        return;
+    }
+    if (requested_username.len > 0 and !std.mem.eql(u8, requested_username, auth_user.username)) {
+        try respondError(context, .forbidden, "You can only save stories for your own account");
         return;
     }
 
@@ -111,7 +119,7 @@ pub fn upsert(context: *horizon.Context) horizon.Errors.Horizon!void {
     var timestamps = app.db.upsertStory(.{
         .allocator = context.allocator,
         .id = id,
-        .username = username,
+        .username = auth_user.username,
         .title = parsed.value.title,
         .summary = parsed.value.summary,
         .prompt = parsed.value.prompt,
@@ -165,9 +173,12 @@ pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
     };
     defer parsed.deinit();
 
-    const username = parsed.value.username orelse "";
-    if (username.len == 0) {
-        try respondError(context, .bad_request, "Username is required");
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
+    const requested_username = parsed.value.username orelse "";
+    if (requested_username.len > 0 and !std.mem.eql(u8, requested_username, auth_user.username)) {
+        try respondError(context, .forbidden, "You can only load stories for your own account");
         return;
     }
 
@@ -175,8 +186,76 @@ pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
     const page_size = parsed.value.page_size orelse 12;
     const offset = if (page <= 0) 0 else page * page_size;
 
-    var list_result = app.db.listStories(context.allocator, username, page_size, offset) catch |err| {
+    var list_result = app.db.listStories(context.allocator, auth_user.username, page_size, offset) catch |err| {
         try respondErrorWithDetail(context, .internal_server_error, "Failed to load stories", @errorName(err));
+        return;
+    };
+    defer list_result.deinit(context.allocator);
+
+    var stories = std.ArrayList(StoryResponse).init(context.allocator);
+    defer stories.deinit();
+
+    for (list_result.items) |item| {
+        try stories.append(.{
+            .id = item.id,
+            .username = item.username,
+            .title = item.title,
+            .summary = item.summary,
+            .prompt = item.prompt,
+            .status = item.status,
+            .ready = item.ready,
+            .published = item.published,
+            .builder_json = item.builder_json,
+            .image_settings_json = item.image_settings_json,
+            .story_plan_json = item.story_plan_json,
+            .final_story_json = item.final_story_json,
+            .draft_response_text = item.draft_response_text,
+            .image_results_json = item.image_results_json,
+            .created_at = item.created_at,
+            .updated_at = item.updated_at,
+        });
+    }
+
+    var buffer = std.ArrayList(u8).init(context.allocator);
+    defer buffer.deinit();
+    try std.json.stringify(
+        StoryListResponse{
+            .status = "ok",
+            .has_more = list_result.has_more,
+            .stories = stories.items,
+        },
+        .{},
+        buffer.writer(),
+    );
+    try context.response.json(buffer.items);
+}
+
+pub fn listPublished(context: *horizon.Context) horizon.Errors.Horizon!void {
+    const app = state.getApp();
+    if (!app.db.isEnabled()) {
+        try respondError(context, .internal_server_error, "Database is not configured");
+        return;
+    }
+
+    if (context.request.body.len == 0) {
+        try respondError(context, .bad_request, "Missing JSON body");
+        return;
+    }
+
+    var parsed = std.json.parseFromSlice(StoryListRequest, context.allocator, context.request.body, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        try respondError(context, .bad_request, "Invalid JSON body");
+        return;
+    };
+    defer parsed.deinit();
+
+    const page = parsed.value.page orelse 0;
+    const page_size = parsed.value.page_size orelse 12;
+    const offset = if (page <= 0) 0 else page * page_size;
+
+    var list_result = app.db.listPublishedStories(context.allocator, page_size, offset) catch |err| {
+        try respondErrorWithDetail(context, .internal_server_error, "Failed to load published stories", @errorName(err));
         return;
     };
     defer list_result.deinit(context.allocator);
@@ -239,13 +318,23 @@ pub fn delete(context: *horizon.Context) horizon.Errors.Horizon!void {
     };
     defer parsed.deinit();
 
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
     const id = parsed.value.id orelse "";
     if (id.len == 0) {
         try respondError(context, .bad_request, "Story id is required");
         return;
     }
 
-    app.db.deleteStory(id, parsed.value.username) catch |err| {
+    if (parsed.value.username) |requested_username| {
+        if (requested_username.len > 0 and !std.mem.eql(u8, requested_username, auth_user.username)) {
+            try respondError(context, .forbidden, "You can only delete your own stories");
+            return;
+        }
+    }
+
+    app.db.deleteStory(id, auth_user.username) catch |err| {
         try respondErrorWithDetail(context, .internal_server_error, "Failed to delete story", @errorName(err));
         return;
     };

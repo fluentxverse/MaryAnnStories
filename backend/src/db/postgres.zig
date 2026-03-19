@@ -226,6 +226,29 @@ pub const Database = struct {
         return try items.toOwnedSlice();
     }
 
+    pub fn resetStoryImages(self: *Database, story_id: []const u8) !void {
+        const pool = try self.requirePool();
+        _ = try pool.exec("delete from story_images where story_id = $1", .{story_id});
+        _ = try pool.exec(
+            "update stories set image_results_json = '{}', ready = false, updated_at = now() where id = $1",
+            .{story_id},
+        );
+    }
+
+    pub fn storyBelongsToUser(self: *Database, story_id: []const u8, username: []const u8) !bool {
+        const pool = try self.requirePool();
+        const row = try pool.row(
+            "select 1 from stories where id = $1 and username = $2",
+            .{ story_id, username },
+        );
+        if (row) |row_result| {
+            var result = row_result;
+            defer result.deinit() catch {};
+            return true;
+        }
+        return false;
+    }
+
     pub fn upsertStory(self: *Database, story: StoryUpsert) !StoryTimestamps {
         const pool = try self.requirePool();
         const row = try pool.row(
@@ -298,6 +321,53 @@ pub const Database = struct {
             \\order by updated_at desc
             \\limit $2 offset $3
         , .{ username, fetch_limit, offset });
+        defer result.deinit();
+
+        var items = std.ArrayList(StoryRecord).init(allocator);
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit();
+        }
+
+        while (try result.next()) |row| {
+            const record = try StoryRecord.fromRow(allocator, row);
+            try items.append(record);
+        }
+
+        var has_more = false;
+        const max_items: usize = @intCast(fetch_limit - 1);
+        if (items.items.len > max_items) {
+            has_more = true;
+            const last_index = items.items.len - 1;
+            var mutable_last = items.items[last_index];
+            mutable_last.deinit(allocator);
+            _ = items.pop();
+        }
+
+        return StoryList{
+            .items = try items.toOwnedSlice(),
+            .has_more = has_more,
+        };
+    }
+
+    pub fn listPublishedStories(
+        self: *Database,
+        allocator: std.mem.Allocator,
+        limit: i64,
+        offset: i64,
+    ) !StoryList {
+        const pool = try self.requirePool();
+        const fetch_limit: i64 = if (limit < 1) 1 else limit + 1;
+        var result = try pool.query(
+            \\select id, username, title, summary, prompt, status, ready, published,
+            \\  builder_json, image_settings_json, story_plan_json, final_story_json,
+            \\  draft_response_text, image_results_json,
+            \\  created_at, updated_at
+            \\from stories
+            \\where published = true
+            \\order by updated_at desc
+            \\limit $1 offset $2
+        , .{ fetch_limit, offset });
         defer result.deinit();
 
         var items = std.ArrayList(StoryRecord).init(allocator);

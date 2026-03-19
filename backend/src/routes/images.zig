@@ -1,10 +1,19 @@
 const std = @import("std");
 const horizon = @import("horizon");
+const auth_route = @import("auth.zig");
+const gemini = @import("../ai/gemini.zig");
 const state = @import("../state.zig");
 
 const ImageRequest = struct {
     prompt: ?[]const u8 = null,
     size: ?[]const u8 = null,
+    aspect_ratio: ?[]const u8 = null,
+    image_size: ?[]const u8 = null,
+    negative_prompt: ?[]const u8 = null,
+    reference_image: ?[]const u8 = null,
+    reference_images: ?[][]const u8 = null,
+    image_provider: ?[]const u8 = null,
+    image_model: ?[]const u8 = null,
 };
 
 const ImageAcceptRequest = struct {
@@ -17,6 +26,25 @@ const ImageAcceptRequest = struct {
 
 const ImageListRequest = struct {
     story_id: ?[]const u8 = null,
+};
+
+const ImageResetRequest = struct {
+    story_id: ?[]const u8 = null,
+};
+
+const ImageProxyRequest = struct {
+    url: ?[]const u8 = null,
+};
+
+const ImageQaRequest = struct {
+    image: ?[]const u8 = null,
+    prompt: ?[]const u8 = null,
+    story_text: ?[]const u8 = null,
+    step_kind: ?[]const u8 = null,
+    step_label: ?[]const u8 = null,
+    expected_aspect_ratio: ?[]const u8 = null,
+    expected_trim_label: ?[]const u8 = null,
+    same_cast_risk: ?bool = null,
 };
 
 const ErrorResponse = struct {
@@ -49,12 +77,15 @@ const ImageListResponse = struct {
     images: []const ImageListItem,
 };
 
+const ImageResetResponse = struct {
+    status: []const u8,
+    story_id: []const u8,
+};
+
 pub fn generate(context: *horizon.Context) horizon.Errors.Horizon!void {
     const app = state.getApp();
-    if (!app.openai.isEnabled()) {
-        try respondError(context, .internal_server_error, "OpenAI API key is missing");
-        return;
-    }
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
 
     if (context.request.body.len == 0) {
         try respondError(context, .bad_request, "Missing JSON body");
@@ -76,8 +107,107 @@ pub fn generate(context: *horizon.Context) horizon.Errors.Horizon!void {
     }
 
     const size = parsed.value.size orelse "1024x1024";
+    const negative_prompt = parsed.value.negative_prompt;
+    const reference_image = parsed.value.reference_image;
+    const reference_images = parsed.value.reference_images;
+    const provider = resolveImageProvider(parsed.value.image_provider, app.image_provider);
+    const requested_image_model = parsed.value.image_model;
+    const use_gemini = isGeminiProvider(provider);
+    if (use_gemini) {
+        if (!app.gemini.isEnabled()) {
+            try respondError(context, .internal_server_error, "Gemini API key is missing");
+            return;
+        }
+    } else if (!app.openai.isEnabled()) {
+        try respondError(context, .internal_server_error, "OpenAI API key is missing");
+        return;
+    }
 
-    const response_body = app.openai.generateImage(context.allocator, prompt, size) catch |err| {
+    if (use_gemini) {
+        const aspect_ratio = mapAspectRatioLabel(parsed.value.aspect_ratio) orelse mapSizeToAspectRatio(size);
+        var reference_payloads = std.ArrayList(ImagePayload).init(context.allocator);
+        defer {
+            for (reference_payloads.items) |*payload| payload.deinit(context.allocator);
+            reference_payloads.deinit();
+        }
+        var reference_inputs = std.ArrayList(gemini.ReferenceImage).init(context.allocator);
+        defer reference_inputs.deinit();
+
+        if (reference_images) |image_refs| {
+            for (image_refs) |image_ref| {
+                if (image_ref.len == 0) continue;
+                const rewritten_reference: ?[]u8 = rewriteSeaweedPublicUrlToInternal(
+                    context.allocator,
+                    app.seaweed.public_url,
+                    app.seaweed.filer_endpoint,
+                    image_ref,
+                ) catch null;
+                defer if (rewritten_reference) |value| context.allocator.free(value);
+
+                const effective_reference = rewritten_reference orelse image_ref;
+                const payload = loadImagePayload(context.allocator, effective_reference) catch |err| {
+                    try respondErrorWithDetail(context, .bad_request, "Unable to read reference image", @errorName(err));
+                    return;
+                };
+                try reference_payloads.append(payload);
+                try reference_inputs.append(.{
+                    .bytes = payload.bytes,
+                    .mime_type = payload.content_type,
+                });
+            }
+        } else if (reference_image) |image_ref| {
+            if (image_ref.len > 0) {
+                const rewritten_reference: ?[]u8 = rewriteSeaweedPublicUrlToInternal(
+                    context.allocator,
+                    app.seaweed.public_url,
+                    app.seaweed.filer_endpoint,
+                    image_ref,
+                ) catch null;
+                defer if (rewritten_reference) |value| context.allocator.free(value);
+
+                const effective_reference = rewritten_reference orelse image_ref;
+                const payload = loadImagePayload(context.allocator, effective_reference) catch |err| {
+                    try respondErrorWithDetail(context, .bad_request, "Unable to read reference image", @errorName(err));
+                    return;
+                };
+                try reference_payloads.append(payload);
+                try reference_inputs.append(.{
+                    .bytes = payload.bytes,
+                    .mime_type = payload.content_type,
+                });
+            }
+        }
+
+        const response_body = app.gemini.generateImage(
+            context.allocator,
+            prompt,
+            aspect_ratio,
+            parsed.value.image_size,
+            negative_prompt,
+            reference_inputs.items,
+            requested_image_model,
+        ) catch |err| {
+            try respondErrorWithDetail(context, .internal_server_error, "Gemini request failed", @errorName(err));
+            return;
+        };
+        defer context.allocator.free(response_body);
+
+        if (normalizeGeminiImageResponse(context.allocator, response_body)) |normalized| {
+            defer context.allocator.free(normalized);
+            try context.response.json(normalized);
+            return;
+        }
+
+        try context.response.json(response_body);
+        return;
+    }
+
+    const response_body = app.openai.generateImage(
+        context.allocator,
+        prompt,
+        size,
+        requested_image_model,
+    ) catch |err| {
         try respondErrorWithDetail(context, .internal_server_error, "OpenAI request failed", @errorName(err));
         return;
     };
@@ -88,6 +218,9 @@ pub fn generate(context: *horizon.Context) horizon.Errors.Horizon!void {
 
 pub fn accept(context: *horizon.Context) horizon.Errors.Horizon!void {
     const app = state.getApp();
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
     if (!app.seaweed.isEnabled()) {
         try respondError(context, .internal_server_error, "Seaweed storage is not configured");
         return;
@@ -117,6 +250,9 @@ pub fn accept(context: *horizon.Context) horizon.Errors.Horizon!void {
     }
     if (std.mem.eql(u8, kind, "page") and page_index == null) {
         try respondError(context, .bad_request, "Page index is required for page images");
+        return;
+    }
+    if (!try ensureStoryOwnership(context, story_id, auth_user.username)) {
         return;
     }
 
@@ -166,6 +302,9 @@ pub fn accept(context: *horizon.Context) horizon.Errors.Horizon!void {
 
 pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
     const app = state.getApp();
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
     if (!app.db.isEnabled()) {
         try respondError(context, .internal_server_error, "Database is not configured");
         return;
@@ -187,6 +326,9 @@ pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
     const story_id = parsed.value.story_id orelse "";
     if (story_id.len == 0) {
         try respondError(context, .bad_request, "Story id is required");
+        return;
+    }
+    if (!try ensureStoryOwnership(context, story_id, auth_user.username)) {
         return;
     }
 
@@ -240,6 +382,373 @@ pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
     try context.response.json(buffer.items);
 }
 
+pub fn reset(context: *horizon.Context) horizon.Errors.Horizon!void {
+    const app = state.getApp();
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
+    if (!app.db.isEnabled()) {
+        try respondError(context, .internal_server_error, "Database is not configured");
+        return;
+    }
+
+    if (context.request.body.len == 0) {
+        try respondError(context, .bad_request, "Missing JSON body");
+        return;
+    }
+
+    var parsed = std.json.parseFromSlice(ImageResetRequest, context.allocator, context.request.body, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        try respondError(context, .bad_request, "Invalid JSON body");
+        return;
+    };
+    defer parsed.deinit();
+
+    const story_id = parsed.value.story_id orelse "";
+    if (story_id.len == 0) {
+        try respondError(context, .bad_request, "Story id is required");
+        return;
+    }
+    if (!try ensureStoryOwnership(context, story_id, auth_user.username)) {
+        return;
+    }
+
+    const records = app.db.listStoryImages(context.allocator, story_id) catch |err| {
+        try respondErrorWithDetail(context, .internal_server_error, "Failed to load images", @errorName(err));
+        return;
+    };
+    defer {
+        for (records) |*record| record.deinit(context.allocator);
+        context.allocator.free(records);
+    }
+
+    if (app.seaweed.isEnabled()) {
+        for (records) |record| {
+            app.seaweed.deleteStoryImage(context.allocator, record.file_path) catch {};
+        }
+    }
+
+    app.db.resetStoryImages(story_id) catch |err| {
+        try respondErrorWithDetail(context, .internal_server_error, "Failed to reset images", @errorName(err));
+        return;
+    };
+
+    var buffer = std.ArrayList(u8).init(context.allocator);
+    defer buffer.deinit();
+    try std.json.stringify(
+        ImageResetResponse{
+            .status = "ok",
+            .story_id = story_id,
+        },
+        .{},
+        buffer.writer(),
+    );
+    try context.response.json(buffer.items);
+}
+
+pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
+    const app = state.getApp();
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
+    if (context.request.body.len == 0) {
+        try respondError(context, .bad_request, "Missing JSON body");
+        return;
+    }
+
+    var parsed = std.json.parseFromSlice(ImageProxyRequest, context.allocator, context.request.body, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        try respondError(context, .bad_request, "Invalid JSON body");
+        return;
+    };
+    defer parsed.deinit();
+
+    const url = parsed.value.url orelse "";
+    if (url.len == 0) {
+        try respondError(context, .bad_request, "Image url is required");
+        return;
+    }
+
+    const rewritten_reference: ?[]u8 = rewriteSeaweedPublicUrlToInternal(
+        context.allocator,
+        app.seaweed.public_url,
+        app.seaweed.filer_endpoint,
+        url,
+    ) catch null;
+    defer if (rewritten_reference) |value| context.allocator.free(value);
+
+    const effective_url = rewritten_reference orelse url;
+    var payload = loadImagePayload(context.allocator, effective_url) catch |err| {
+        try respondErrorWithDetail(context, .bad_request, "Unable to read proxied image", @errorName(err));
+        return;
+    };
+    defer payload.deinit(context.allocator);
+
+    try context.response.setHeader("Content-Type", payload.content_type);
+    try context.response.setHeader("Cache-Control", "private, max-age=300");
+    try context.response.setBody(payload.bytes);
+}
+
+pub fn qa(context: *horizon.Context) horizon.Errors.Horizon!void {
+    const app = state.getApp();
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
+    if (!app.openai.isEnabled()) {
+        try respondError(context, .internal_server_error, "OpenAI API key is missing");
+        return;
+    }
+
+    if (context.request.body.len == 0) {
+        try respondError(context, .bad_request, "Missing JSON body");
+        return;
+    }
+
+    var parsed = std.json.parseFromSlice(ImageQaRequest, context.allocator, context.request.body, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        try respondError(context, .bad_request, "Invalid JSON body");
+        return;
+    };
+    defer parsed.deinit();
+
+    const image_ref = parsed.value.image orelse "";
+    if (image_ref.len == 0) {
+        try respondError(context, .bad_request, "Image is required");
+        return;
+    }
+
+    var payload = loadImagePayload(context.allocator, image_ref) catch |err| {
+        try respondErrorWithDetail(context, .bad_request, "Unable to read QA image payload", @errorName(err));
+        return;
+    };
+    defer payload.deinit(context.allocator);
+
+    const qa_prompt = try buildImageQaPrompt(context.allocator, parsed.value);
+    defer context.allocator.free(qa_prompt);
+
+    const response_body = app.openai.analyzeImageQa(
+        context.allocator,
+        qa_prompt,
+        payload.bytes,
+        payload.content_type,
+    ) catch |err| {
+        try respondErrorWithDetail(context, .internal_server_error, "OpenAI image QA failed", @errorName(err));
+        return;
+    };
+    defer context.allocator.free(response_body);
+
+    const normalized = extractOpenAiJsonContent(context.allocator, response_body) orelse {
+        try respondError(context, .internal_server_error, "Image QA response could not be parsed");
+        return;
+    };
+    defer context.allocator.free(normalized);
+
+    try context.response.json(normalized);
+}
+
+fn ensureStoryOwnership(
+    context: *horizon.Context,
+    story_id: []const u8,
+    username: []const u8,
+) horizon.Errors.Horizon!bool {
+    const app = state.getApp();
+    const belongs_to_user = app.db.storyBelongsToUser(story_id, username) catch |err| {
+        try respondErrorWithDetail(context, .internal_server_error, "Failed to verify story ownership", @errorName(err));
+        return false;
+    };
+    if (!belongs_to_user) {
+        try respondError(context, .forbidden, "You can only access images for your own stories");
+        return false;
+    }
+    return true;
+}
+
+fn buildImageQaPrompt(
+    allocator: std.mem.Allocator,
+    request: ImageQaRequest,
+) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        "Inspect this illustration for quality issues before it is saved or exported. "
+            ++ "Context: step kind: {s}. Step label: {s}. Story text: {s}. Generation prompt: {s}. "
+            ++ "Expected trim geometry: {s}. Expected aspect ratio: {s}. "
+            ++ "Multiple recurring child characters risk: {s}. "
+            ++ "Check specifically for: stray readable text, speech bubbles, signage, unsafe child staging, broken or excessive reflections, bad anatomy or proportions, wrong recurring-character continuity, wrong aspect composition, and book/mockup artifacts such as gutters, seams, page borders, frames, or open-book views. "
+            ++ "If the scene contains mirrors, be strict about matching reflections to the real children only. "
+            ++ "If the story is for children, be strict about safe pedestrian and indoor practice behavior. "
+            ++ "Return concise issue details that explain what is visibly wrong.",
+        .{
+            request.step_kind orelse "unknown",
+            request.step_label orelse "Unknown step",
+            request.story_text orelse "",
+            request.prompt orelse "",
+            request.expected_trim_label orelse "unknown trim",
+            request.expected_aspect_ratio orelse "unknown ratio",
+            if (request.same_cast_risk orelse false) "yes" else "no",
+        },
+    );
+}
+
+fn extractOpenAiJsonContent(allocator: std.mem.Allocator, payload: []const u8) ?[]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{
+        .ignore_unknown_fields = true,
+    }) catch return null;
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return null;
+    const choices = parsed.value.object.get("choices") orelse return null;
+    if (choices != .array or choices.array.items.len == 0) return null;
+
+    const first = choices.array.items[0];
+    if (first != .object) return null;
+    const message = first.object.get("message") orelse return null;
+    if (message != .object) return null;
+    const content = message.object.get("content") orelse return null;
+    if (content != .string) return null;
+
+    return allocator.dupe(u8, content.string) catch null;
+}
+
+const NormalizedImageEntry = struct {
+    b64_json: []const u8,
+};
+
+const NormalizedImageResponse = struct {
+    data: []const NormalizedImageEntry,
+};
+
+fn mapSizeToAspectRatio(size: []const u8) ?[]const u8 {
+    if (size.len == 0) return null;
+    if (std.mem.eql(u8, size, "1024x1792")) return "9:16";
+    if (std.mem.eql(u8, size, "1792x1024")) return "16:9";
+    if (std.mem.eql(u8, size, "1024x1024")) return "1:1";
+    return null;
+}
+
+fn mapAspectRatioLabel(label: ?[]const u8) ?[]const u8 {
+    const value = label orelse return null;
+    if (value.len == 0) return null;
+    if (containsIgnoreCase(value, "1:1")) return "1:1";
+    if (containsIgnoreCase(value, "16:9")) return "16:9";
+    if (containsIgnoreCase(value, "9:16")) return "9:16";
+    if (containsIgnoreCase(value, "3:4")) return "3:4";
+    if (containsIgnoreCase(value, "4:3")) return "4:3";
+    if (containsIgnoreCase(value, "5:4")) return "4:3";
+    if (containsIgnoreCase(value, "4:5")) return "3:4";
+    if (containsIgnoreCase(value, "7:9")) return "3:4";
+    if (containsIgnoreCase(value, "16:10")) return "3:2";
+    if (containsIgnoreCase(value, "8:5")) return "3:2";
+    if (containsIgnoreCase(value, "3:2")) return "3:2";
+    if (containsIgnoreCase(value, "2:3")) return "2:3";
+    return null;
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    const max_start = haystack.len - needle.len;
+    var i: usize = 0;
+    while (i <= max_start) : (i += 1) {
+        var matched = true;
+        var j: usize = 0;
+        while (j < needle.len) : (j += 1) {
+            if (std.ascii.toLower(haystack[i + j]) != std.ascii.toLower(needle[j])) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) return true;
+    }
+    return false;
+}
+
+fn resolveImageProvider(requested: ?[]const u8, fallback: []const u8) []const u8 {
+    if (requested) |value| {
+        if (isGeminiProvider(value) or isOpenAiProvider(value)) {
+            return value;
+        }
+    }
+    return fallback;
+}
+
+fn isGeminiProvider(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "gemini");
+}
+
+fn isOpenAiProvider(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "openai");
+}
+
+fn normalizeGeminiImageResponse(allocator: std.mem.Allocator, payload: []const u8) ?[]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{
+        .ignore_unknown_fields = true,
+    }) catch return null;
+    defer parsed.deinit();
+
+    const base64 = extractGeminiBase64(parsed.value) orelse return null;
+
+    var buffer = std.ArrayList(u8).init(allocator);
+    errdefer buffer.deinit();
+
+    const entries = [_]NormalizedImageEntry{.{ .b64_json = base64 }};
+    std.json.stringify(
+        NormalizedImageResponse{ .data = entries[0..] },
+        .{},
+        buffer.writer(),
+    ) catch return null;
+
+    return buffer.toOwnedSlice() catch null;
+}
+
+fn extractGeminiBase64(value: std.json.Value) ?[]const u8 {
+    if (value != .object) return null;
+    if (value.object.get("candidates")) |candidates| {
+        if (candidates != .array or candidates.array.items.len == 0) return null;
+        for (candidates.array.items) |candidate| {
+            if (candidate != .object) continue;
+            const content = candidate.object.get("content") orelse continue;
+            if (content != .object) continue;
+            const parts = content.object.get("parts") orelse continue;
+            if (parts != .array) continue;
+            for (parts.array.items) |part| {
+                if (part != .object) continue;
+                if (part.object.get("inlineData")) |inline_data| {
+                    if (inline_data == .object) {
+                        if (inline_data.object.get("data")) |bytes| {
+                            if (bytes == .string) return bytes.string;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (value.object.get("predictions")) |predictions| {
+        if (predictions != .array or predictions.array.items.len == 0) return null;
+        const first = predictions.array.items[0];
+        if (first != .object) return null;
+        if (first.object.get("bytesBase64Encoded")) |bytes| {
+            if (bytes == .string) return bytes.string;
+        }
+        if (first.object.get("imageBytes")) |bytes| {
+            if (bytes == .string) return bytes.string;
+        }
+        if (first.object.get("image")) |image_obj| {
+            if (image_obj == .object) {
+                if (image_obj.object.get("bytesBase64Encoded")) |bytes| {
+                    if (bytes == .string) return bytes.string;
+                }
+                if (image_obj.object.get("imageBytes")) |bytes| {
+                    if (bytes == .string) return bytes.string;
+                }
+            }
+        }
+    }
+    return null;
+}
+
 fn respondError(context: *horizon.Context, status: horizon.StatusCode, message: []const u8) horizon.Errors.Horizon!void {
     var buffer = std.ArrayList(u8).init(context.allocator);
     defer buffer.deinit();
@@ -273,6 +782,24 @@ fn buildPublicUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []co
         if (needs_slash) "/" else "",
         path,
     }) catch null;
+}
+
+fn rewriteSeaweedPublicUrlToInternal(
+    allocator: std.mem.Allocator,
+    public_url: []const u8,
+    filer_endpoint: []const u8,
+    image_ref: []const u8,
+) !?[]u8 {
+    if (public_url.len == 0 or filer_endpoint.len == 0) return null;
+    if (!std.mem.startsWith(u8, image_ref, public_url)) return null;
+
+    var suffix = image_ref[public_url.len..];
+    while (suffix.len > 0 and suffix[0] == '/') {
+        suffix = suffix[1..];
+    }
+    if (suffix.len == 0) return null;
+
+    return buildPublicUrl(allocator, filer_endpoint, suffix);
 }
 
 const ImagePayload = struct {

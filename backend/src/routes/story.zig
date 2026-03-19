@@ -1,5 +1,6 @@
 const std = @import("std");
 const horizon = @import("horizon");
+const auth_route = @import("auth.zig");
 const state = @import("../state.zig");
 
 const StoryRequest = struct {
@@ -14,6 +15,9 @@ const ErrorResponse = struct {
 
 pub fn generate(context: *horizon.Context) horizon.Errors.Horizon!void {
     const app = state.getApp();
+    var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
+    defer auth_user.deinit(context.allocator);
+
     if (!app.openai.isEnabled()) {
         try respondError(context, .internal_server_error, "OpenAI API key is missing");
         return;

@@ -4,6 +4,7 @@ const config = @import("config.zig");
 const db = @import("db/postgres.zig");
 const nullclaw = @import("ai/nullclaw.zig");
 const openai = @import("ai/openai.zig");
+const gemini = @import("ai/gemini.zig");
 const seaweed = @import("storage/seaweed.zig");
 
 pub const App = struct {
@@ -12,7 +13,9 @@ pub const App = struct {
     db: db.Database,
     nullclaw: nullclaw.Client,
     openai: openai.Client,
+    gemini: gemini.Client,
     seaweed: seaweed.Client,
+    image_provider: []const u8,
 
     pub fn init(allocator: std.mem.Allocator, cfg: *const config.Config) !App {
         var database = try db.Database.init(allocator, &cfg.db);
@@ -32,8 +35,15 @@ pub const App = struct {
                 cfg.openai_api_key,
                 cfg.openai_story_model,
                 cfg.openai_image_model,
+                cfg.openai_image_qa_model,
+            ),
+            .gemini = gemini.Client.init(
+                cfg.gemini_base_url,
+                cfg.gemini_api_key,
+                cfg.gemini_image_model,
             ),
             .seaweed = seaweed.Client.init(cfg.seaweed_filer_endpoint, cfg.seaweed_public_url),
+            .image_provider = cfg.image_provider,
         };
     }
 

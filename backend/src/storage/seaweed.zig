@@ -71,6 +71,34 @@ pub const Client = struct {
             .url = public_url,
         };
     }
+
+    pub fn deleteStoryImage(
+        self: *const Client,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+    ) !void {
+        if (self.filer_endpoint.len == 0) {
+            return error.SeaweedEndpointMissing;
+        }
+        if (path.len == 0) {
+            return;
+        }
+
+        const delete_url = try buildUrl(allocator, self.filer_endpoint, path);
+        defer allocator.free(delete_url);
+
+        var client = std.http.Client{ .allocator = allocator };
+        defer client.deinit();
+
+        const response = try client.fetch(.{
+            .location = .{ .url = delete_url },
+            .method = .DELETE,
+        });
+
+        if (response.status != .ok and response.status != .no_content and response.status != .not_found) {
+            return error.SeaweedDeleteFailed;
+        }
+    }
 };
 
 pub const StoredImage = struct {

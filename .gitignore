@@ -27,8 +27,20 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
+# zig build/cache
+.zig-cache
+zig-cache
+zig-out
+**/.zig-cache/
+**/zig-cache/
+**/zig-out/
+**/.zig-cache/**/*.txt
+**/zig-cache/**/*.txt
+backend/zig-out/bin/
+
 # IntelliJ based IDEs
 .idea
 
 # Finder (MacOS) folder config
 .DS_Store
+backend/.zig-cache/h/72c40dfe92dbbef6ff810a2c0aab487a.txt
