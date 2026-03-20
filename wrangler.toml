@@ -2,6 +2,10 @@ name = "mary-ann-stories"
 main = "cloudflare/worker.ts"
 compatibility_date = "2026-03-20"
 
+[[routes]]
+pattern = "maryannpielago.biz"
+custom_domain = true
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"
@@ -10,7 +14,7 @@ binding = "ASSETS"
 # Point this at your deployed Zig backend origin.
 # Example:
 # API_ORIGIN = "https://maryannstories-api.yourdomain.com"
-API_ORIGIN = "https://your-backend-origin.example.com"
+API_ORIGIN = "https://api.maryannpielago.biz"
 
 [observability.logs]
 enabled = true
