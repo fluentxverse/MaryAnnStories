@@ -86,6 +86,43 @@ const normalizeClientImageUrl = (value: string | undefined) => {
   }
 };
 
+const buildViewImageUrl = (
+  value: string | undefined,
+  options: {
+    maxWidth?: number;
+    maxHeight?: number;
+    quality?: number;
+  } = {},
+) => {
+  const normalized = normalizeClientImageUrl(value);
+  if (!normalized || normalized.startsWith("data:")) return normalized;
+
+  try {
+    const target = new URL(
+      normalized,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+    );
+
+    if (!isBackendImageProxyUrl(target.toString())) {
+      return normalized;
+    }
+
+    if (options.maxWidth && options.maxWidth > 0) {
+      target.searchParams.set("max_width", String(Math.round(options.maxWidth)));
+    }
+    if (options.maxHeight && options.maxHeight > 0) {
+      target.searchParams.set("max_height", String(Math.round(options.maxHeight)));
+    }
+    if (options.quality && options.quality > 0) {
+      target.searchParams.set("quality", String(Math.round(options.quality)));
+    }
+
+    return target.toString();
+  } catch {
+    return normalized;
+  }
+};
+
 const blobToDataUrl = (blob: Blob) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -4396,7 +4433,11 @@ const App = () => {
   });
   const activeImageUrl = createMemo(() => {
     const result = activeImageResult();
-    return result?.storedUrl ?? result?.imageUrl ?? null;
+    return buildViewImageUrl(result?.storedUrl ?? result?.imageUrl ?? null, {
+      maxWidth: 1400,
+      maxHeight: 1400,
+      quality: 80,
+    });
   });
   const activeLayoutStep = createMemo(() => {
     const story = finalStory();
@@ -4410,7 +4451,11 @@ const App = () => {
   });
   const activeLayoutImageUrl = createMemo(() => {
     const result = activeLayoutResult();
-    return result?.storedUrl ?? result?.imageUrl ?? null;
+    return buildViewImageUrl(result?.storedUrl ?? result?.imageUrl ?? null, {
+      maxWidth: 1600,
+      maxHeight: 1200,
+      quality: 82,
+    });
   });
   const activeLayoutSettings = createMemo<BookLayoutSettings>(() => {
     const pageKey = `page-${finalPageIndex() + 1}`;
@@ -5278,7 +5323,11 @@ const App = () => {
     if (!story) return null;
     const pageId = `page-${publishedPreviewPageIndex() + 1}`;
     const pageResult = story.imageResultsSnapshot?.[pageId];
-    return pageResult?.storedUrl ?? pageResult?.imageUrl ?? null;
+    return buildViewImageUrl(pageResult?.storedUrl ?? pageResult?.imageUrl ?? null, {
+      maxWidth: 720,
+      maxHeight: 900,
+      quality: 72,
+    });
   });
   const activePublishedPreviewText = createMemo(() => {
     if (homeShelfTab() !== "published") return "";
@@ -6495,7 +6544,13 @@ const App = () => {
         <div class="book-layout-art-layer">
           <Show when={sheet.imageUrl} fallback={renderBookEmulatorPlaceholder(sheet)}>
             <img
-              src={sheet.imageUrl!}
+              src={
+                buildViewImageUrl(sheet.imageUrl!, {
+                  maxWidth: isSpread ? 1600 : 1100,
+                  maxHeight: isSpread ? 1000 : 1400,
+                  quality: 76,
+                }) ?? sheet.imageUrl!
+              }
               alt={sheet.label}
               loading="lazy"
               decoding="async"

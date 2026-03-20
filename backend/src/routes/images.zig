@@ -34,6 +34,9 @@ const ImageResetRequest = struct {
 
 const ImageProxyRequest = struct {
     url: ?[]const u8 = null,
+    max_width: ?u32 = null,
+    max_height: ?u32 = null,
+    quality: ?u8 = null,
 };
 
 const ImageQaRequest = struct {
@@ -485,6 +488,34 @@ pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
         return;
     }
 
+    const max_width = blk: {
+        if (context.request.method == .GET) {
+            if (context.request.getQuery("max_width")) |value| {
+                break :blk std.fmt.parseInt(u32, value, 10) catch null;
+            }
+            break :blk null;
+        }
+        break :blk parsed.?.value.max_width;
+    };
+    const max_height = blk: {
+        if (context.request.method == .GET) {
+            if (context.request.getQuery("max_height")) |value| {
+                break :blk std.fmt.parseInt(u32, value, 10) catch null;
+            }
+            break :blk null;
+        }
+        break :blk parsed.?.value.max_height;
+    };
+    const quality = blk: {
+        if (context.request.method == .GET) {
+            if (context.request.getQuery("quality")) |value| {
+                break :blk std.fmt.parseInt(u8, value, 10) catch null;
+            }
+            break :blk null;
+        }
+        break :blk parsed.?.value.quality;
+    };
+
     const rewritten_reference: ?[]u8 = rewriteSeaweedPublicUrlToInternal(
         context.allocator,
         app.seaweed.public_url,
@@ -500,13 +531,28 @@ pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
     };
     defer payload.deinit(context.allocator);
 
-    try context.response.setHeader("Content-Type", payload.content_type);
+    var preview_payload: ?ImagePayload = null;
+    defer if (preview_payload) |*value| value.deinit(context.allocator);
+
+    if ((max_width orelse 0) > 0 or (max_height orelse 0) > 0) {
+        preview_payload = resizeImagePreview(
+            context.allocator,
+            payload,
+            max_width,
+            max_height,
+            quality,
+        ) catch null;
+    }
+
+    const response_payload = if (preview_payload) |value| value else payload;
+
+    try context.response.setHeader("Content-Type", response_payload.content_type);
     try context.response.setHeader(
         "Cache-Control",
         "private, max-age=86400, stale-while-revalidate=604800, immutable",
     );
     try context.response.setHeader("Cross-Origin-Resource-Policy", "same-site");
-    try context.response.setBody(payload.bytes);
+    try context.response.setBody(response_payload.bytes);
 }
 
 pub fn qa(context: *horizon.Context) horizon.Errors.Horizon!void {
@@ -959,4 +1005,92 @@ fn fetchImage(allocator: std.mem.Allocator, url: []const u8) !ImagePayload {
         .bytes = try response_body.toOwnedSlice(),
         .content_type = "image/png",
     };
+}
+
+fn resizeImagePreview(
+    allocator: std.mem.Allocator,
+    payload: ImagePayload,
+    max_width: ?u32,
+    max_height: ?u32,
+    quality: ?u8,
+) !ImagePayload {
+    if (!(std.mem.startsWith(u8, payload.content_type, "image/"))) {
+        return error.UnsupportedImageType;
+    }
+
+    const ext = extensionForContentType(payload.content_type);
+    const token = std.crypto.random.int(u64);
+    const input_path = try std.fmt.allocPrint(allocator, "/tmp/maryannstories-preview-{x}.{s}", .{ token, ext });
+    defer allocator.free(input_path);
+    const output_path = try std.fmt.allocPrint(allocator, "/tmp/maryannstories-preview-{x}.webp", .{ token });
+    defer allocator.free(output_path);
+
+    {
+        const file = try std.fs.createFileAbsolute(input_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll(payload.bytes);
+    }
+    defer std.fs.deleteFileAbsolute(input_path) catch {};
+    defer std.fs.deleteFileAbsolute(output_path) catch {};
+
+    const width = max_width orelse 0;
+    const height = max_height orelse 0;
+    const resize_arg = if (width > 0 and height > 0)
+        try std.fmt.allocPrint(allocator, "{d}x{d}>", .{ width, height })
+    else if (width > 0)
+        try std.fmt.allocPrint(allocator, "{d}x>", .{ width })
+    else
+        try std.fmt.allocPrint(allocator, "x{d}>", .{ height });
+    defer allocator.free(resize_arg);
+
+    const quality_arg = try std.fmt.allocPrint(allocator, "{d}", .{ clampQuality(quality orelse 78) });
+    defer allocator.free(quality_arg);
+
+    const run_result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &.{
+            "convert",
+            input_path,
+            "-strip",
+            "-auto-orient",
+            "-resize",
+            resize_arg,
+            "-quality",
+            quality_arg,
+            output_path,
+        },
+        .max_output_bytes = 32 * 1024,
+    }) catch return error.ResizeFailed;
+    defer allocator.free(run_result.stdout);
+    defer allocator.free(run_result.stderr);
+
+    switch (run_result.term) {
+        .Exited => |code| {
+            if (code != 0) return error.ResizeFailed;
+        },
+        else => return error.ResizeFailed,
+    }
+
+    const output_file = try std.fs.openFileAbsolute(output_path, .{});
+    defer output_file.close();
+    const stat = try output_file.stat();
+    const output_bytes = try output_file.readToEndAlloc(allocator, @intCast(stat.size));
+
+    return .{
+        .bytes = output_bytes,
+        .content_type = "image/webp",
+    };
+}
+
+fn extensionForContentType(content_type: []const u8) []const u8 {
+    if (std.mem.eql(u8, content_type, "image/jpeg")) return "jpg";
+    if (std.mem.eql(u8, content_type, "image/webp")) return "webp";
+    if (std.mem.eql(u8, content_type, "image/gif")) return "gif";
+    return "png";
+}
+
+fn clampQuality(value: u8) u8 {
+    if (value < 20) return 20;
+    if (value > 92) return 92;
+    return value;
 }

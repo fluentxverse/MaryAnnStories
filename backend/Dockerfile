@@ -25,6 +25,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         libpcre2-8-0 \
+        imagemagick \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
