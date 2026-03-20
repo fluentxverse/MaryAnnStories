@@ -32,6 +32,17 @@ const runtimeApiBaseUrl = () => {
     }
   }
 
+  if (typeof window !== "undefined" && !import.meta.env.DEV) {
+    const { hostname } = window.location;
+    if (
+      hostname === "maryannpielago.biz" ||
+      hostname === "www.maryannpielago.biz" ||
+      hostname.endsWith(".workers.dev")
+    ) {
+      return "https://api.maryannpielago.biz";
+    }
+  }
+
   return "";
 };
 
