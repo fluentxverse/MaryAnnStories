@@ -19,7 +19,23 @@ import {
 } from "./lib/bookProduction";
 
 const logoUrl = new URL("../assets/logo.png", import.meta.url).href;
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+const runtimeApiBaseUrl = () => {
+  const configured = import.meta.env.VITE_API_BASE_URL;
+  if (typeof configured === "string" && configured.trim().length > 0) {
+    return configured.trim();
+  }
+
+  if (typeof window !== "undefined" && import.meta.env.DEV) {
+    const { hostname } = window.location;
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return "http://localhost:4000";
+    }
+  }
+
+  return "";
+};
+
+const apiBaseUrl = runtimeApiBaseUrl();
 const backCoverSlogan = "Gentle storybooks for growing hearts";
 const backCoverAgeBand = "Ages 5-7";
 const defaultPrintBleedInches = 0.125;
@@ -4183,6 +4199,20 @@ const App = () => {
     }
   };
 
+  const waitForAuthenticatedSession = async (
+    attempts = 5,
+    delayMs = 150,
+  ): Promise<AuthSessionSnapshot | null> => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const session = await fetchCurrentAuthenticatedSession();
+      if (session) return session;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+      }
+    }
+    return null;
+  };
+
   onMount(() => {
     if (typeof window === "undefined") return;
     clearStoredAuth();
@@ -7556,7 +7586,7 @@ const imageMetaCards = createMemo(() => [
         return;
       }
 
-      const cookieSession = await fetchCurrentAuthenticatedSession();
+      const cookieSession = await waitForAuthenticatedSession();
       if (!cookieSession) {
         setAuthError("Authentication succeeded, but the session cookie was not established.");
         return;
