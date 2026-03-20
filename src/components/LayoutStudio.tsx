@@ -284,6 +284,9 @@ export default function LayoutStudio(props: any) {
                     <img
                       src={props.activeLayoutImageUrl()!}
                       alt={`Storybook art for page ${props.finalPageIndex() + 1}`}
+                      loading="eager"
+                      decoding="async"
+                      fetchpriority="high"
                     />
                   </Show>
                 </div>

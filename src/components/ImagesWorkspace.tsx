@@ -375,6 +375,9 @@ export default function ImagesWorkspace(props: any) {
                   <img
                     src={props.activeImageUrl()!}
                     alt={props.activeImageStep()?.label ?? "Generated story art"}
+                    loading="eager"
+                    decoding="async"
+                    fetchpriority="high"
                   />
                   <Show when={props.showBackCoverPreviewImprint()}>
                     {props.renderBackCoverImprint("preview")}

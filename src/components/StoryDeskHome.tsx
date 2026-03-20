@@ -284,6 +284,9 @@ export default function StoryDeskHome(props: any) {
                         class="story-published-preview-image"
                         src={props.activePublishedPreviewImage()!}
                         alt={`${story().title} page ${props.publishedPreviewPageIndex() + 1}`}
+                        loading="lazy"
+                        decoding="async"
+                        fetchpriority="low"
                       />
                     </Show>
                     <div class="story-published-preview-copy">

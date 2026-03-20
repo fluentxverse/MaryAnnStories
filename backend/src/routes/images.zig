@@ -501,7 +501,11 @@ pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
     defer payload.deinit(context.allocator);
 
     try context.response.setHeader("Content-Type", payload.content_type);
-    try context.response.setHeader("Cache-Control", "private, max-age=300");
+    try context.response.setHeader(
+        "Cache-Control",
+        "private, max-age=86400, stale-while-revalidate=604800, immutable",
+    );
+    try context.response.setHeader("Cross-Origin-Resource-Policy", "same-site");
     try context.response.setBody(payload.bytes);
 }
 

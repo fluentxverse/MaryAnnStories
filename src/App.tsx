@@ -6494,7 +6494,13 @@ const App = () => {
       >
         <div class="book-layout-art-layer">
           <Show when={sheet.imageUrl} fallback={renderBookEmulatorPlaceholder(sheet)}>
-            <img src={sheet.imageUrl!} alt={sheet.label} />
+            <img
+              src={sheet.imageUrl!}
+              alt={sheet.label}
+              loading="lazy"
+              decoding="async"
+              fetchpriority="low"
+            />
           </Show>
         </div>
         <Show when={imageSettings().printShowSafeZone}>
@@ -9064,7 +9070,13 @@ const imageMetaCards = createMemo(() => [
               </button>
               <div class="image-modal-preview">
                 <div class="image-modal-art-stage">
-                  <img src={item().imageUrl} alt={item().title} />
+                  <img
+                    src={item().imageUrl}
+                    alt={item().title}
+                    loading="eager"
+                    decoding="async"
+                    fetchpriority="high"
+                  />
                   <Show when={isBackCoverModalItem(item())}>
                     {renderBackCoverImprint("modal")}
                   </Show>
