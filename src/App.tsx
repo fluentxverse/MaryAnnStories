@@ -4433,11 +4433,11 @@ const App = () => {
   });
   const activeImageUrl = createMemo(() => {
     const result = activeImageResult();
-    return buildViewImageUrl(result?.storedUrl ?? result?.imageUrl ?? null, {
-      maxWidth: 1400,
-      maxHeight: 1400,
-      quality: 80,
-    });
+    // Keep the main queue preview on the original proxied image path.
+    // The resized preview variant is great for browse-heavy surfaces, but this
+    // active preview needs to stay maximally reliable while the user reviews a
+    // single selected image.
+    return normalizeClientImageUrl(result?.storedUrl ?? result?.imageUrl ?? undefined);
   });
   const activeLayoutStep = createMemo(() => {
     const story = finalStory();
