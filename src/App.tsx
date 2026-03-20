@@ -55,9 +55,22 @@ const legacyUserStorageKey = "mary-ann-stories-user";
 const authSessionVersion = 1;
 const cookieSessionMarker = "__cookie_session__";
 
+const isBackendImageProxyUrl = (value: string) => {
+  try {
+    const target = new URL(
+      value,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+    );
+    return target.pathname === "/api/images/proxy" && target.searchParams.has("url");
+  } catch {
+    return false;
+  }
+};
+
 const normalizeClientImageUrl = (value: string | undefined) => {
   if (!value || value.trim().length === 0) return undefined;
   if (value.startsWith("data:")) return value;
+  if (isBackendImageProxyUrl(value)) return value;
 
   try {
     const target = new URL(value, typeof window !== "undefined" ? window.location.origin : "http://localhost");
@@ -72,6 +85,20 @@ const normalizeClientImageUrl = (value: string | undefined) => {
     return value;
   }
 };
+
+const blobToDataUrl = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Unable to convert image blob to data URL."));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read image blob."));
+    reader.readAsDataURL(blob);
+  });
 
 let qrCodeModulePromise: Promise<typeof import("qrcode")> | null = null;
 let jsPdfModulePromise: Promise<typeof import("jspdf")> | null = null;
@@ -3586,19 +3613,25 @@ const drawImageCover = (
 
 const fetchImageAsObjectUrl = async (src: string) => {
   const isRemote = src.startsWith("http://") || src.startsWith("https://");
-  const headers: Record<string, string> = {};
-  if (isRemote) {
-    headers["Content-Type"] = "application/json";
-  }
   const response = await fetch(
-    isRemote ? `${apiBaseUrl}/api/images/proxy` : src,
     isRemote
-      ? {
-          method: "POST",
-          credentials: "include",
-          headers,
-          body: JSON.stringify({ url: src }),
-        }
+      ? isBackendImageProxyUrl(src)
+        ? src
+        : `${apiBaseUrl}/api/images/proxy`
+      : src,
+    isRemote
+      ? isBackendImageProxyUrl(src)
+        ? {
+            credentials: "include",
+          }
+        : {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url: src }),
+          }
       : undefined,
   );
   if (!response.ok) {
@@ -3615,6 +3648,49 @@ const fetchImageAsObjectUrl = async (src: string) => {
   }
   const blob = await response.blob();
   return URL.createObjectURL(blob);
+};
+
+const fetchImageAsDataUrl = async (src: string) => {
+  if (src.startsWith("data:")) {
+    return src;
+  }
+
+  const isRemote = src.startsWith("http://") || src.startsWith("https://");
+  const response = await fetch(
+    isRemote
+      ? isBackendImageProxyUrl(src)
+        ? src
+        : `${apiBaseUrl}/api/images/proxy`
+      : src,
+    isRemote
+      ? isBackendImageProxyUrl(src)
+        ? {
+            credentials: "include",
+          }
+        : {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url: src }),
+          }
+      : undefined,
+  );
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const data = (await response.json()) as { error?: string; detail?: string };
+      detail = data.detail ?? data.error ?? "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(
+      `Image fetch failed: ${response.status}${detail ? ` (${detail})` : ""}`,
+    );
+  }
+
+  return blobToDataUrl(await response.blob());
 };
 
 const readImageMetrics = async (src: string) => {
@@ -4573,12 +4649,16 @@ const App = () => {
           .map((value) => normalizeWhitespace(value).toLowerCase())
           .filter((value) => value.length > 0).length >= 2;
 
+      const qaImageRef = imageRef.startsWith("data:")
+        ? imageRef
+        : await fetchImageAsDataUrl(imageRef);
+
       const [metrics, response] = await Promise.all([
         readImageMetrics(imageRef),
         authorizedFetch(`${apiBaseUrl}/api/images/qa`, {
           method: "POST",
           body: JSON.stringify({
-            image: imageRef,
+            image: qaImageRef,
             prompt,
             story_text: storyText,
             step_kind: step.kind,

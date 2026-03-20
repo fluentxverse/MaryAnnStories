@@ -863,6 +863,11 @@ const ImagePayload = struct {
 };
 
 fn loadImagePayload(allocator: std.mem.Allocator, image_ref: []const u8) !ImagePayload {
+    if (extractProxyTargetUrl(allocator, image_ref)) |inner_ref| {
+        defer allocator.free(inner_ref);
+        return try loadImagePayload(allocator, inner_ref);
+    } else |_| {}
+
     if (std.mem.startsWith(u8, image_ref, "data:")) {
         return try decodeDataUrl(allocator, image_ref);
     }
@@ -872,6 +877,37 @@ fn loadImagePayload(allocator: std.mem.Allocator, image_ref: []const u8) !ImageP
     }
 
     return error.InvalidImageReference;
+}
+
+fn extractProxyTargetUrl(allocator: std.mem.Allocator, image_ref: []const u8) ![]u8 {
+    if (!(std.mem.startsWith(u8, image_ref, "http://") or std.mem.startsWith(u8, image_ref, "https://"))) {
+        return error.NotProxyUrl;
+    }
+
+    const uri = std.Uri.parse(image_ref) catch return error.NotProxyUrl;
+    const path = switch (uri.path) {
+        .raw => |value| value,
+        .percent_encoded => |value| value,
+    };
+    if (!std.mem.eql(u8, path, "/api/images/proxy")) {
+        return error.NotProxyUrl;
+    }
+
+    const query_component = uri.query orelse return error.NotProxyUrl;
+    const query = switch (query_component) {
+        .raw => |value| value,
+        .percent_encoded => |value| value,
+    };
+    const key_index = std.mem.indexOf(u8, query, "url=") orelse return error.NotProxyUrl;
+    const encoded_value = query[key_index + 4 ..];
+    const value_end = std.mem.indexOfScalar(u8, encoded_value, '&') orelse encoded_value.len;
+    const encoded_slice = encoded_value[0..value_end];
+    if (encoded_slice.len == 0) return error.NotProxyUrl;
+
+    const buffer = try allocator.dupe(u8, encoded_slice);
+    defer allocator.free(buffer);
+    const decoded = std.Uri.percentDecodeInPlace(buffer);
+    return try allocator.dupe(u8, decoded);
 }
 
 fn decodeDataUrl(allocator: std.mem.Allocator, data_url: []const u8) !ImagePayload {
