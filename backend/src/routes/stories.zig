@@ -67,6 +67,16 @@ const StoryResponse = struct {
     updated_at: []const u8,
 };
 
+const SanitizedStoryJson = struct {
+    image_settings_json: ?[]u8,
+    image_results_json: ?[]u8,
+
+    fn deinit(self: *SanitizedStoryJson, allocator: std.mem.Allocator) void {
+        if (self.image_settings_json) |bytes| allocator.free(bytes);
+        if (self.image_results_json) |bytes| allocator.free(bytes);
+    }
+};
+
 pub fn upsert(context: *horizon.Context) horizon.Errors.Horizon!void {
     const app = state.getApp();
     if (!app.db.isEnabled()) {
@@ -194,8 +204,21 @@ pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
 
     var stories = std.ArrayList(StoryResponse).init(context.allocator);
     defer stories.deinit();
+    var sanitized_values = std.ArrayList(SanitizedStoryJson).init(context.allocator);
+    defer {
+        for (sanitized_values.items) |*value| value.deinit(context.allocator);
+        sanitized_values.deinit();
+    }
 
     for (list_result.items) |item| {
+        const sanitized = try sanitizeStoryJsonForList(
+            context.allocator,
+            context,
+            item.image_settings_json,
+            item.image_results_json,
+        );
+        try sanitized_values.append(sanitized);
+
         try stories.append(.{
             .id = item.id,
             .username = item.username,
@@ -206,11 +229,11 @@ pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
             .ready = item.ready,
             .published = item.published,
             .builder_json = item.builder_json,
-            .image_settings_json = item.image_settings_json,
+            .image_settings_json = sanitized.image_settings_json,
             .story_plan_json = item.story_plan_json,
             .final_story_json = item.final_story_json,
             .draft_response_text = item.draft_response_text,
-            .image_results_json = item.image_results_json,
+            .image_results_json = sanitized.image_results_json,
             .created_at = item.created_at,
             .updated_at = item.updated_at,
         });
@@ -262,8 +285,21 @@ pub fn listPublished(context: *horizon.Context) horizon.Errors.Horizon!void {
 
     var stories = std.ArrayList(StoryResponse).init(context.allocator);
     defer stories.deinit();
+    var sanitized_values = std.ArrayList(SanitizedStoryJson).init(context.allocator);
+    defer {
+        for (sanitized_values.items) |*value| value.deinit(context.allocator);
+        sanitized_values.deinit();
+    }
 
     for (list_result.items) |item| {
+        const sanitized = try sanitizeStoryJsonForList(
+            context.allocator,
+            context,
+            item.image_settings_json,
+            item.image_results_json,
+        );
+        try sanitized_values.append(sanitized);
+
         try stories.append(.{
             .id = item.id,
             .username = item.username,
@@ -274,11 +310,11 @@ pub fn listPublished(context: *horizon.Context) horizon.Errors.Horizon!void {
             .ready = item.ready,
             .published = item.published,
             .builder_json = item.builder_json,
-            .image_settings_json = item.image_settings_json,
+            .image_settings_json = sanitized.image_settings_json,
             .story_plan_json = item.story_plan_json,
             .final_story_json = item.final_story_json,
             .draft_response_text = item.draft_response_text,
-            .image_results_json = item.image_results_json,
+            .image_results_json = sanitized.image_results_json,
             .created_at = item.created_at,
             .updated_at = item.updated_at,
         });
@@ -358,6 +394,122 @@ fn freeOptional(allocator: std.mem.Allocator, value: ?[]const u8) void {
     if (value) |bytes| {
         allocator.free(bytes);
     }
+}
+
+fn sanitizeStoryJsonForList(
+    allocator: std.mem.Allocator,
+    context: *horizon.Context,
+    image_settings_json: ?[]const u8,
+    image_results_json: ?[]const u8,
+) !SanitizedStoryJson {
+    return .{
+        .image_settings_json = try stripStoryListImageSettings(allocator, image_settings_json),
+        .image_results_json = try stripStoryListImageResults(allocator, context, image_results_json),
+    };
+}
+
+fn stripStoryListImageSettings(
+    allocator: std.mem.Allocator,
+    raw_json: ?[]const u8,
+) !?[]u8 {
+    const value = raw_json orelse return null;
+    if (value.len == 0) return null;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, value, .{
+        .ignore_unknown_fields = true,
+    }) catch return try allocator.dupe(u8, value);
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        return try allocator.dupe(u8, value);
+    }
+
+    _ = parsed.value.object.swapRemove("imageHistory");
+    _ = parsed.value.object.swapRemove("qaReviewNotes");
+
+    var buffer = std.ArrayList(u8).init(allocator);
+    errdefer buffer.deinit();
+    try std.json.stringify(parsed.value, .{}, buffer.writer());
+    return try buffer.toOwnedSlice();
+}
+
+fn stripStoryListImageResults(
+    allocator: std.mem.Allocator,
+    context: *horizon.Context,
+    raw_json: ?[]const u8,
+) !?[]u8 {
+    const value = raw_json orelse return null;
+    if (value.len == 0) return null;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, value, .{
+        .ignore_unknown_fields = true,
+    }) catch return try allocator.dupe(u8, value);
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        return try allocator.dupe(u8, value);
+    }
+
+    var iterator = parsed.value.object.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.value_ptr.* != .object) continue;
+        if (entry.value_ptr.object.getPtr("imageUrl")) |image_url| {
+            if (image_url.* == .string and std.mem.startsWith(u8, image_url.string, "data:")) {
+                image_url.* = .null;
+            } else if (image_url.* == .string) {
+                if (buildClientImageProxyUrl(allocator, context, image_url.string)) |client_url| {
+                    image_url.* = .{ .string = client_url };
+                }
+            }
+        }
+        if (entry.value_ptr.object.getPtr("storedUrl")) |stored_url| {
+            if (stored_url.* == .string) {
+                if (buildClientImageProxyUrl(allocator, context, stored_url.string)) |client_url| {
+                    stored_url.* = .{ .string = client_url };
+                }
+            }
+        }
+    }
+
+    var buffer = std.ArrayList(u8).init(allocator);
+    errdefer buffer.deinit();
+    try std.json.stringify(parsed.value, .{}, buffer.writer());
+    return try buffer.toOwnedSlice();
+}
+
+fn buildClientImageProxyUrl(
+    allocator: std.mem.Allocator,
+    context: *horizon.Context,
+    source_url: []const u8,
+) ?[]u8 {
+    if (!(std.mem.startsWith(u8, source_url, "http://") or std.mem.startsWith(u8, source_url, "https://"))) {
+        return null;
+    }
+    const origin = resolveRequestOrigin(context) orelse return null;
+    return std.fmt.allocPrint(
+        allocator,
+        "{s}/api/images/proxy?url={query}",
+        .{ origin, std.Uri.Component{ .raw = source_url } },
+    ) catch null;
+}
+
+fn resolveRequestOrigin(context: *horizon.Context) ?[]const u8 {
+    const host = context.request.getHeader("Host") orelse context.request.getHeader("host") orelse return null;
+    const forwarded_proto = context.request.getHeader("X-Forwarded-Proto") orelse
+        context.request.getHeader("x-forwarded-proto");
+    const origin_header = context.request.getHeader("Origin") orelse context.request.getHeader("origin");
+    const scheme = blk: {
+        if (forwarded_proto) |proto| {
+            if (proto.len > 0) break :blk proto;
+        }
+        if (origin_header) |origin| {
+            if (std.mem.startsWith(u8, origin, "https://")) break :blk "https";
+            if (std.mem.startsWith(u8, origin, "http://")) break :blk "http";
+        }
+        break :blk "http";
+    };
+
+    return std.fmt.allocPrint(context.allocator, "{s}://{s}", .{ scheme, host }) catch null;
 }
 
 fn respondError(context: *horizon.Context, status: horizon.StatusCode, message: []const u8) horizon.Errors.Horizon!void {

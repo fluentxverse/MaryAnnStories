@@ -55,6 +55,24 @@ const legacyUserStorageKey = "mary-ann-stories-user";
 const authSessionVersion = 1;
 const cookieSessionMarker = "__cookie_session__";
 
+const normalizeClientImageUrl = (value: string | undefined) => {
+  if (!value || value.trim().length === 0) return undefined;
+  if (value.startsWith("data:")) return value;
+
+  try {
+    const target = new URL(value, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    const apiOrigin = apiBaseUrl || (typeof window !== "undefined" ? window.location.origin : "");
+    const isRemoteHttp = target.protocol === "http:" || target.protocol === "https:";
+    if (!isRemoteHttp || !apiOrigin) {
+      return value;
+    }
+
+    return `${apiOrigin}/api/images/proxy?url=${encodeURIComponent(target.toString())}`;
+  } catch {
+    return value;
+  }
+};
+
 let qrCodeModulePromise: Promise<typeof import("qrcode")> | null = null;
 let jsPdfModulePromise: Promise<typeof import("jspdf")> | null = null;
 let jsZipModulePromise: Promise<typeof import("jszip")> | null = null;
@@ -1278,11 +1296,12 @@ const mapSavedImagesToResults = (
           ? image.source_url
           : null;
     const existing = existingResults[stepId];
+    const normalizedUrl = normalizeClientImageUrl(url ?? undefined);
     results[stepId] = {
       ...existing,
       status: "saved",
-      imageUrl: url ?? undefined,
-      storedUrl: url ?? undefined,
+      imageUrl: normalizedUrl,
+      storedUrl: normalizedUrl,
       generatedAt: formatTimestamp(image.created_at),
     };
   }
@@ -1537,10 +1556,12 @@ const normalizeImageSettingsSnapshot = (
                           : `${key}-${Math.random().toString(36).slice(2, 10)}`,
                       status: data.status === "saved" ? "saved" : "generated",
                       prompt: typeof data.prompt === "string" ? data.prompt : "",
-                      imageUrl:
+                      imageUrl: normalizeClientImageUrl(
                         typeof data.imageUrl === "string" ? data.imageUrl : undefined,
-                      storedUrl:
+                      ),
+                      storedUrl: normalizeClientImageUrl(
                         typeof data.storedUrl === "string" ? data.storedUrl : undefined,
+                      ),
                       createdAt:
                         typeof data.createdAt === "string"
                           ? data.createdAt
@@ -1698,8 +1719,12 @@ const normalizeImageResultsSnapshot = (
       entry.status === "generated" || entry.status === "saved" ? entry.status : "idle";
     results[key] = {
       status,
-      imageUrl: typeof entry.imageUrl === "string" ? entry.imageUrl : undefined,
-      storedUrl: typeof entry.storedUrl === "string" ? entry.storedUrl : undefined,
+      imageUrl: normalizeClientImageUrl(
+        typeof entry.imageUrl === "string" ? entry.imageUrl : undefined,
+      ),
+      storedUrl: normalizeClientImageUrl(
+        typeof entry.storedUrl === "string" ? entry.storedUrl : undefined,
+      ),
       generatedAt: typeof entry.generatedAt === "string" ? entry.generatedAt : undefined,
       qaState:
         entry.qaState === "running" ||
@@ -4460,8 +4485,8 @@ const App = () => {
         : `${step.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     status,
     prompt,
-    imageUrl: result.imageUrl,
-    storedUrl: result.storedUrl,
+    imageUrl: normalizeClientImageUrl(result.imageUrl),
+    storedUrl: normalizeClientImageUrl(result.storedUrl),
     createdAt: new Date().toISOString(),
   });
   const pushImageHistoryEntry = (
@@ -7524,12 +7549,14 @@ const imageMetaCards = createMemo(() => [
         return;
       }
 
-      const storedUrl = typeof data?.url === "string" ? data.url : null;
+      const storedUrl = normalizeClientImageUrl(
+        typeof data?.url === "string" ? data.url : undefined,
+      );
       const currentPrompt = activeImagePrompt().trim();
       const nextResult = {
         status: "saved" as const,
-        imageUrl: result?.imageUrl ?? imageRef,
-        storedUrl: storedUrl ?? imageRef,
+        imageUrl: normalizeClientImageUrl(result?.imageUrl ?? imageRef),
+        storedUrl: storedUrl ?? normalizeClientImageUrl(imageRef),
         generatedAt: result?.generatedAt,
         qaState: result?.qaState,
         qaReport: result?.qaReport,

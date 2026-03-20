@@ -284,12 +284,13 @@ pub fn accept(context: *horizon.Context) horizon.Errors.Horizon!void {
 
     var buffer = std.ArrayList(u8).init(context.allocator);
     defer buffer.deinit();
+    const client_url = buildClientImageUrl(context.allocator, context, stored.url) orelse stored.url;
     try std.json.stringify(
         AcceptResponse{
             .status = "ok",
             .story_id = story_id,
             .file_path = stored.path,
-            .url = stored.url,
+            .url = client_url,
             .kind = kind,
             .page_index = page_index,
             .image_id = image_id,
@@ -355,8 +356,14 @@ pub fn list(context: *horizon.Context) horizon.Errors.Horizon!void {
         var url: ?[]const u8 = null;
         if (record.file_path.len > 0) {
             if (buildPublicUrl(context.allocator, app.seaweed.public_url, record.file_path)) |value| {
-                try allocated_urls.append(value);
-                url = value;
+                if (buildClientImageUrl(context.allocator, context, value)) |client_value| {
+                    try allocated_urls.append(client_value);
+                    url = client_value;
+                    context.allocator.free(value);
+                } else {
+                    try allocated_urls.append(value);
+                    url = value;
+                }
             }
         }
 
@@ -452,20 +459,27 @@ pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
     var auth_user = (try auth_route.requireAuthenticatedUser(context)) orelse return;
     defer auth_user.deinit(context.allocator);
 
-    if (context.request.body.len == 0) {
-        try respondError(context, .bad_request, "Missing JSON body");
-        return;
-    }
+    var parsed: ?std.json.Parsed(ImageProxyRequest) = null;
+    defer if (parsed) |*value| value.deinit();
 
-    var parsed = std.json.parseFromSlice(ImageProxyRequest, context.allocator, context.request.body, .{
-        .ignore_unknown_fields = true,
-    }) catch {
-        try respondError(context, .bad_request, "Invalid JSON body");
-        return;
+    const url = blk: {
+        if (context.request.method == .GET) {
+            break :blk context.request.getQuery("url") orelse "";
+        }
+
+        if (context.request.body.len == 0) {
+            try respondError(context, .bad_request, "Missing JSON body");
+            return;
+        }
+
+        parsed = std.json.parseFromSlice(ImageProxyRequest, context.allocator, context.request.body, .{
+            .ignore_unknown_fields = true,
+        }) catch {
+            try respondError(context, .bad_request, "Invalid JSON body");
+            return;
+        };
+        break :blk parsed.?.value.url orelse "";
     };
-    defer parsed.deinit();
-
-    const url = parsed.value.url orelse "";
     if (url.len == 0) {
         try respondError(context, .bad_request, "Image url is required");
         return;
@@ -782,6 +796,43 @@ fn buildPublicUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []co
         if (needs_slash) "/" else "",
         path,
     }) catch null;
+}
+
+fn buildClientImageUrl(
+    allocator: std.mem.Allocator,
+    context: *horizon.Context,
+    source_url: []const u8,
+) ?[]u8 {
+    if (source_url.len == 0) return null;
+    if (!(std.mem.startsWith(u8, source_url, "http://") or std.mem.startsWith(u8, source_url, "https://"))) {
+        return null;
+    }
+
+    const origin = resolveRequestOrigin(context) orelse return null;
+    return std.fmt.allocPrint(
+        allocator,
+        "{s}/api/images/proxy?url={query}",
+        .{ origin, std.Uri.Component{ .raw = source_url } },
+    ) catch null;
+}
+
+fn resolveRequestOrigin(context: *horizon.Context) ?[]const u8 {
+    const host = context.request.getHeader("Host") orelse context.request.getHeader("host") orelse return null;
+    const forwarded_proto = context.request.getHeader("X-Forwarded-Proto") orelse
+        context.request.getHeader("x-forwarded-proto");
+    const origin_header = context.request.getHeader("Origin") orelse context.request.getHeader("origin");
+    const scheme = blk: {
+        if (forwarded_proto) |proto| {
+            if (proto.len > 0) break :blk proto;
+        }
+        if (origin_header) |origin| {
+            if (std.mem.startsWith(u8, origin, "https://")) break :blk "https";
+            if (std.mem.startsWith(u8, origin, "http://")) break :blk "http";
+        }
+        break :blk "http";
+    };
+
+    return std.fmt.allocPrint(context.allocator, "{s}://{s}", .{ scheme, host }) catch null;
 }
 
 fn rewriteSeaweedPublicUrlToInternal(

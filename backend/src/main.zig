@@ -4,6 +4,7 @@ const horizon = @import("horizon");
 const config = @import("config.zig");
 const App = @import("app.zig").App;
 const state = @import("state.zig");
+const DynamicCorsMiddleware = @import("middleware/dynamic_cors.zig").DynamicCorsMiddleware;
 const health_route = @import("routes/health.zig");
 const agent_route = @import("routes/agent.zig");
 const auth_route = @import("routes/auth.zig");
@@ -30,10 +31,8 @@ pub fn main() !void {
 
     server.show_routes_on_startup = true;
 
-    const frontend_origin = cfg.env.get("APP_FRONTEND_ORIGIN") orelse "http://localhost:3000";
-    var cors = horizon.CorsMiddleware.init()
-        .withOrigin(frontend_origin)
-        .withCredentials(true);
+    const frontend_origins = cfg.env.get("APP_FRONTEND_ORIGIN") orelse "http://localhost:3000,https://maryannpielago.biz,https://www.maryannpielago.biz,https://maryannstories.paulanthonyarriola.workers.dev";
+    var cors = DynamicCorsMiddleware.init(frontend_origins);
     try server.router.middlewares.use(&cors);
 
     try server.router.get("/api/health", health_route.health);
@@ -51,6 +50,7 @@ pub fn main() !void {
     try server.router.post("/api/images/accept", image_route.accept);
     try server.router.post("/api/images/list", image_route.list);
     try server.router.post("/api/images/reset", image_route.reset);
+    try server.router.get("/api/images/proxy", image_route.proxy);
     try server.router.post("/api/images/proxy", image_route.proxy);
     try server.router.post("/api/images/qa", image_route.qa);
 

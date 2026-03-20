@@ -22,7 +22,7 @@ services:
       - .env
     environment:
       PORT: 4000
-      APP_FRONTEND_ORIGIN: ${APP_FRONTEND_ORIGIN:-http://localhost:3000}
+      APP_FRONTEND_ORIGIN: ${APP_FRONTEND_ORIGIN:-http://localhost:3000,https://maryannpielago.biz,https://www.maryannpielago.biz,https://maryannstories.paulanthonyarriola.workers.dev}
       DATABASE_URL: postgresql://maryann:maryann@db:5432/maryannstories
       NULLCLAW_GATEWAY_URL: ${NULLCLAW_GATEWAY_URL:-http://127.0.0.1:3000}
       NULLCLAW_BEARER_TOKEN: ${NULLCLAW_BEARER_TOKEN:-}
