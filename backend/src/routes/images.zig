@@ -259,7 +259,15 @@ pub fn accept(context: *horizon.Context) horizon.Errors.Horizon!void {
         return;
     }
 
-    var payload = loadImagePayload(context.allocator, image_ref) catch |err| {
+    const normalized_image_ref = normalizeSeaweedImageReference(
+        context.allocator,
+        app.seaweed.public_url,
+        app.seaweed.filer_endpoint,
+        image_ref,
+    ) catch null;
+    defer if (normalized_image_ref) |value| context.allocator.free(value);
+
+    var payload = loadImagePayload(context.allocator, normalized_image_ref orelse image_ref) catch |err| {
         try respondErrorWithDetail(context, .bad_request, "Unable to read image payload", @errorName(err));
         return;
     };
@@ -524,7 +532,17 @@ pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
     ) catch null;
     defer if (rewritten_reference) |value| context.allocator.free(value);
 
-    const effective_url = rewritten_reference orelse url;
+    const localhost_rewritten_reference: ?[]u8 = if (rewritten_reference == null)
+        rewriteLocalSeaweedUrlToInternal(
+            context.allocator,
+            app.seaweed.filer_endpoint,
+            url,
+        ) catch null
+    else
+        null;
+    defer if (localhost_rewritten_reference) |value| context.allocator.free(value);
+
+    const effective_url = rewritten_reference orelse localhost_rewritten_reference orelse url;
     var payload = loadImagePayload(context.allocator, effective_url) catch |err| {
         try respondErrorWithDetail(context, .bad_request, "Unable to read proxied image", @errorName(err));
         return;
@@ -584,7 +602,15 @@ pub fn qa(context: *horizon.Context) horizon.Errors.Horizon!void {
         return;
     }
 
-    var payload = loadImagePayload(context.allocator, image_ref) catch |err| {
+    const normalized_image_ref = normalizeSeaweedImageReference(
+        context.allocator,
+        app.seaweed.public_url,
+        app.seaweed.filer_endpoint,
+        image_ref,
+    ) catch null;
+    defer if (normalized_image_ref) |value| context.allocator.free(value);
+
+    var payload = loadImagePayload(context.allocator, normalized_image_ref orelse image_ref) catch |err| {
         try respondErrorWithDetail(context, .bad_request, "Unable to read QA image payload", @errorName(err));
         return;
     };
@@ -895,6 +921,71 @@ fn rewriteSeaweedPublicUrlToInternal(
     if (!std.mem.startsWith(u8, image_ref, public_url)) return null;
 
     var suffix = image_ref[public_url.len..];
+    while (suffix.len > 0 and suffix[0] == '/') {
+        suffix = suffix[1..];
+    }
+    if (suffix.len == 0) return null;
+
+    return buildPublicUrl(allocator, filer_endpoint, suffix);
+}
+
+fn normalizeSeaweedImageReference(
+    allocator: std.mem.Allocator,
+    public_url: []const u8,
+    filer_endpoint: []const u8,
+    image_ref: []const u8,
+) !?[]u8 {
+    const raw_reference = if (extractProxyTargetUrl(allocator, image_ref)) |inner_ref|
+        inner_ref
+    else |err| switch (err) {
+        error.NotProxyUrl => null,
+        else => return err,
+    };
+    defer if (raw_reference) |value| allocator.free(value);
+
+    const effective_reference = raw_reference orelse image_ref;
+
+    if (try rewriteSeaweedPublicUrlToInternal(allocator, public_url, filer_endpoint, effective_reference)) |rewritten| {
+        return rewritten;
+    }
+
+    if (try rewriteLocalSeaweedUrlToInternal(allocator, filer_endpoint, effective_reference)) |rewritten| {
+        return rewritten;
+    }
+
+    return if (raw_reference) |value| try allocator.dupe(u8, value) else null;
+}
+
+fn rewriteLocalSeaweedUrlToInternal(
+    allocator: std.mem.Allocator,
+    filer_endpoint: []const u8,
+    image_ref: []const u8,
+) !?[]u8 {
+    if (filer_endpoint.len == 0) return null;
+    if (!(std.mem.startsWith(u8, image_ref, "http://") or std.mem.startsWith(u8, image_ref, "https://"))) {
+        return null;
+    }
+
+    const uri = std.Uri.parse(image_ref) catch return null;
+    const host = uri.host orelse return null;
+    const host_value = switch (host) {
+        .raw => |value| value,
+        .percent_encoded => |value| value,
+    };
+    if (!(std.mem.eql(u8, host_value, "localhost") or std.mem.eql(u8, host_value, "127.0.0.1"))) {
+        return null;
+    }
+
+    const port = uri.port orelse return null;
+    if (port != 18888 and port != 8888) {
+        return null;
+    }
+
+    const path = switch (uri.path) {
+        .raw => |value| value,
+        .percent_encoded => |value| value,
+    };
+    var suffix = path;
     while (suffix.len > 0 and suffix[0] == '/') {
         suffix = suffix[1..];
     }

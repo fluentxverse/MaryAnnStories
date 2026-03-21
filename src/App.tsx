@@ -67,6 +67,20 @@ const isBackendImageProxyUrl = (value: string) => {
   }
 };
 
+const extractBackendProxyTargetUrl = (value: string) => {
+  try {
+    const target = new URL(
+      value,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+    );
+    if (target.pathname !== "/api/images/proxy") return null;
+    const innerUrl = target.searchParams.get("url");
+    return innerUrl && innerUrl.trim().length > 0 ? innerUrl : null;
+  } catch {
+    return null;
+  }
+};
+
 const normalizeClientImageUrl = (value: string | undefined) => {
   if (!value || value.trim().length === 0) return undefined;
   if (value.startsWith("data:")) return value;
@@ -3682,25 +3696,20 @@ const drawImageCover = (
 
 const fetchImageAsObjectUrl = async (src: string) => {
   const isRemote = src.startsWith("http://") || src.startsWith("https://");
+  const proxyTargetUrl = isRemote && isBackendImageProxyUrl(src) ? extractBackendProxyTargetUrl(src) : null;
   const response = await fetch(
     isRemote
-      ? isBackendImageProxyUrl(src)
-        ? src
-        : `${apiBaseUrl}/api/images/proxy`
+      ? `${apiBaseUrl}/api/images/proxy`
       : src,
     isRemote
-      ? isBackendImageProxyUrl(src)
-        ? {
-            credentials: "include",
-          }
-        : {
-            method: "POST",
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ url: src }),
-          }
+      ? {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ url: proxyTargetUrl ?? src }),
+        }
       : undefined,
   );
   if (!response.ok) {
@@ -3725,25 +3734,20 @@ const fetchImageAsDataUrl = async (src: string) => {
   }
 
   const isRemote = src.startsWith("http://") || src.startsWith("https://");
+  const proxyTargetUrl = isRemote && isBackendImageProxyUrl(src) ? extractBackendProxyTargetUrl(src) : null;
   const response = await fetch(
     isRemote
-      ? isBackendImageProxyUrl(src)
-        ? src
-        : `${apiBaseUrl}/api/images/proxy`
+      ? `${apiBaseUrl}/api/images/proxy`
       : src,
     isRemote
-      ? isBackendImageProxyUrl(src)
-        ? {
-            credentials: "include",
-          }
-        : {
-            method: "POST",
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ url: src }),
-          }
+      ? {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ url: proxyTargetUrl ?? src }),
+        }
       : undefined,
   );
   if (!response.ok) {
