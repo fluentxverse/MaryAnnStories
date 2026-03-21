@@ -140,6 +140,24 @@ const ChatContentPart = struct {
     type: []const u8,
     text: ?[]const u8 = null,
     image_url: ?ChatImageUrl = null,
+
+    pub fn jsonStringify(self: ChatContentPart, jw: anytype) !void {
+        try jw.beginObject();
+        try jw.objectField("type");
+        try jw.write(self.type);
+
+        if (self.text) |value| {
+            try jw.objectField("text");
+            try jw.write(value);
+        }
+
+        if (self.image_url) |value| {
+            try jw.objectField("image_url");
+            try jw.write(value);
+        }
+
+        try jw.endObject();
+    }
 };
 
 const ChatImageUrl = struct {

@@ -472,10 +472,14 @@ pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
 
     var parsed: ?std.json.Parsed(ImageProxyRequest) = null;
     defer if (parsed) |*value| value.deinit();
+    var decoded_query_url: ?[]u8 = null;
+    defer if (decoded_query_url) |value| context.allocator.free(value);
 
     const url = blk: {
         if (context.request.method == .GET) {
-            break :blk context.request.getQuery("url") orelse "";
+            const raw_url = context.request.getQuery("url") orelse "";
+            decoded_query_url = decodeQueryParamValue(context.allocator, raw_url) catch null;
+            break :blk decoded_query_url orelse raw_url;
         }
 
         if (context.request.body.len == 0) {
@@ -524,25 +528,15 @@ pub fn proxy(context: *horizon.Context) horizon.Errors.Horizon!void {
         break :blk parsed.?.value.quality;
     };
 
-    const rewritten_reference: ?[]u8 = rewriteSeaweedPublicUrlToInternal(
+    const normalized_reference = normalizeSeaweedImageReference(
         context.allocator,
         app.seaweed.public_url,
         app.seaweed.filer_endpoint,
         url,
     ) catch null;
-    defer if (rewritten_reference) |value| context.allocator.free(value);
+    defer if (normalized_reference) |value| context.allocator.free(value);
 
-    const localhost_rewritten_reference: ?[]u8 = if (rewritten_reference == null)
-        rewriteLocalSeaweedUrlToInternal(
-            context.allocator,
-            app.seaweed.filer_endpoint,
-            url,
-        ) catch null
-    else
-        null;
-    defer if (localhost_rewritten_reference) |value| context.allocator.free(value);
-
-    const effective_url = rewritten_reference orelse localhost_rewritten_reference orelse url;
+    const effective_url = normalized_reference orelse url;
     var payload = loadImagePayload(context.allocator, effective_url) catch |err| {
         try respondErrorWithDetail(context, .bad_request, "Unable to read proxied image", @errorName(err));
         return;
@@ -615,6 +609,16 @@ pub fn qa(context: *horizon.Context) horizon.Errors.Horizon!void {
         return;
     };
     defer payload.deinit(context.allocator);
+    var qa_payload: ?ImagePayload = null;
+    defer if (qa_payload) |*value| value.deinit(context.allocator);
+
+    qa_payload = resizeImagePreview(
+        context.allocator,
+        payload,
+        1600,
+        1600,
+        82,
+    ) catch null;
 
     const qa_prompt = try buildImageQaPrompt(context.allocator, parsed.value);
     defer context.allocator.free(qa_prompt);
@@ -622,13 +626,19 @@ pub fn qa(context: *horizon.Context) horizon.Errors.Horizon!void {
     const response_body = app.openai.analyzeImageQa(
         context.allocator,
         qa_prompt,
-        payload.bytes,
-        payload.content_type,
+        if (qa_payload) |value| value.bytes else payload.bytes,
+        if (qa_payload) |value| value.content_type else payload.content_type,
     ) catch |err| {
         try respondErrorWithDetail(context, .internal_server_error, "OpenAI image QA failed", @errorName(err));
         return;
     };
     defer context.allocator.free(response_body);
+
+    if (extractOpenAiErrorMessage(context.allocator, response_body)) |error_message| {
+        defer context.allocator.free(error_message);
+        try respondErrorWithDetail(context, .internal_server_error, "OpenAI image QA failed", error_message);
+        return;
+    }
 
     const normalized = extractOpenAiJsonContent(context.allocator, response_body) orelse {
         try respondError(context, .internal_server_error, "Image QA response could not be parsed");
@@ -697,9 +707,79 @@ fn extractOpenAiJsonContent(allocator: std.mem.Allocator, payload: []const u8) ?
     const message = first.object.get("message") orelse return null;
     if (message != .object) return null;
     const content = message.object.get("content") orelse return null;
-    if (content != .string) return null;
+    return duplicateJsonLikeContent(allocator, content);
+}
 
-    return allocator.dupe(u8, content.string) catch null;
+fn extractOpenAiErrorMessage(allocator: std.mem.Allocator, payload: []const u8) ?[]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{
+        .ignore_unknown_fields = true,
+    }) catch return null;
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return null;
+
+    if (parsed.value.object.get("error")) |error_value| {
+        if (error_value == .object) {
+            if (error_value.object.get("message")) |message| {
+                if (message == .string and message.string.len > 0) {
+                    return allocator.dupe(u8, message.string) catch null;
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+fn duplicateJsonLikeContent(allocator: std.mem.Allocator, value: std.json.Value) ?[]u8 {
+    switch (value) {
+        .string => |text| return extractJsonObjectString(allocator, text),
+        .array => |parts| {
+            var buffer = std.ArrayList(u8).init(allocator);
+            defer buffer.deinit();
+
+            for (parts.items) |part| {
+                switch (part) {
+                    .string => |text| buffer.appendSlice(text) catch return null,
+                    .object => |object| {
+                        if (object.get("text")) |text_value| {
+                            switch (text_value) {
+                                .string => |text| buffer.appendSlice(text) catch return null,
+                                .object => |nested| {
+                                    if (nested.get("value")) |value_text| {
+                                        if (value_text == .string) {
+                                            buffer.appendSlice(value_text.string) catch return null;
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            if (buffer.items.len == 0) return null;
+            return extractJsonObjectString(allocator, buffer.items);
+        },
+        else => return null,
+    }
+}
+
+fn extractJsonObjectString(allocator: std.mem.Allocator, text: []const u8) ?[]u8 {
+    const trimmed = std.mem.trim(u8, text, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    if (trimmed[0] == '{' and trimmed[trimmed.len - 1] == '}') {
+        return allocator.dupe(u8, trimmed) catch null;
+    }
+
+    const start_index = std.mem.indexOfScalar(u8, trimmed, '{') orelse return null;
+    const end_index = std.mem.lastIndexOfScalar(u8, trimmed, '}') orelse return null;
+    if (end_index <= start_index) {
+        return null;
+    }
+    return allocator.dupe(u8, trimmed[start_index .. end_index + 1]) catch null;
 }
 
 const NormalizedImageEntry = struct {
@@ -1075,6 +1155,24 @@ fn extractProxyTargetUrl(allocator: std.mem.Allocator, image_ref: []const u8) ![
     const buffer = try allocator.dupe(u8, encoded_slice);
     defer allocator.free(buffer);
     const decoded = std.Uri.percentDecodeInPlace(buffer);
+    return try allocator.dupe(u8, decoded);
+}
+
+fn decodeQueryParamValue(allocator: std.mem.Allocator, value: []const u8) !?[]u8 {
+    if (value.len == 0) return null;
+    if (std.mem.indexOfScalar(u8, value, '%') == null and std.mem.indexOfScalar(u8, value, '+') == null) {
+        return null;
+    }
+
+    const buffer = try allocator.dupe(u8, value);
+    errdefer allocator.free(buffer);
+    for (buffer) |*char| {
+        if (char.* == '+') {
+            char.* = ' ';
+        }
+    }
+    const decoded = std.Uri.percentDecodeInPlace(buffer);
+    if (decoded.len == 0) return null;
     return try allocator.dupe(u8, decoded);
 }
 
