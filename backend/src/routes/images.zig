@@ -1033,53 +1033,73 @@ fn resizeImagePreview(
     defer std.fs.deleteFileAbsolute(input_path) catch {};
     defer std.fs.deleteFileAbsolute(output_path) catch {};
 
-    const width = max_width orelse 0;
-    const height = max_height orelse 0;
-    const resize_arg = if (width > 0 and height > 0)
-        try std.fmt.allocPrint(allocator, "{d}x{d}>", .{ width, height })
-    else if (width > 0)
-        try std.fmt.allocPrint(allocator, "{d}x>", .{ width })
-    else
-        try std.fmt.allocPrint(allocator, "x{d}>", .{ height });
-    defer allocator.free(resize_arg);
+    const preview_max_bytes: usize = 2 * 1024 * 1024;
+    var width = max_width orelse 0;
+    var height = max_height orelse 0;
+    var current_quality = clampQuality(quality orelse 72);
+    var attempt: u8 = 0;
 
-    const quality_arg = try std.fmt.allocPrint(allocator, "{d}", .{ clampQuality(quality orelse 78) });
-    defer allocator.free(quality_arg);
+    while (attempt < 6) : (attempt += 1) {
+        const resize_arg = if (width > 0 and height > 0)
+            try std.fmt.allocPrint(allocator, "{d}x{d}>", .{ width, height })
+        else if (width > 0)
+            try std.fmt.allocPrint(allocator, "{d}x>", .{ width })
+        else
+            try std.fmt.allocPrint(allocator, "x{d}>", .{ height });
+        defer allocator.free(resize_arg);
 
-    const run_result = std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &.{
-            "convert",
-            input_path,
-            "-strip",
-            "-auto-orient",
-            "-resize",
-            resize_arg,
-            "-quality",
-            quality_arg,
-            output_path,
-        },
-        .max_output_bytes = 32 * 1024,
-    }) catch return error.ResizeFailed;
-    defer allocator.free(run_result.stdout);
-    defer allocator.free(run_result.stderr);
+        const quality_arg = try std.fmt.allocPrint(allocator, "{d}", .{ current_quality });
+        defer allocator.free(quality_arg);
 
-    switch (run_result.term) {
-        .Exited => |code| {
-            if (code != 0) return error.ResizeFailed;
-        },
-        else => return error.ResizeFailed,
+        const run_result = std.process.Child.run(.{
+            .allocator = allocator,
+            .argv = &.{
+                "convert",
+                input_path,
+                "-strip",
+                "-auto-orient",
+                "-resize",
+                resize_arg,
+                "-quality",
+                quality_arg,
+                output_path,
+            },
+            .max_output_bytes = 32 * 1024,
+        }) catch return error.ResizeFailed;
+        defer allocator.free(run_result.stdout);
+        defer allocator.free(run_result.stderr);
+
+        switch (run_result.term) {
+            .Exited => |code| {
+                if (code != 0) return error.ResizeFailed;
+            },
+            else => return error.ResizeFailed,
+        }
+
+        const output_file = try std.fs.openFileAbsolute(output_path, .{});
+        defer output_file.close();
+        const stat = try output_file.stat();
+
+        if (stat.size <= preview_max_bytes or attempt == 5) {
+            const output_bytes = try output_file.readToEndAlloc(allocator, @intCast(stat.size));
+            return .{
+                .bytes = output_bytes,
+                .content_type = "image/webp",
+            };
+        }
+
+        current_quality = if (current_quality > 56) current_quality - 10 else 46;
+        width = scalePreviewDimension(width);
+        height = scalePreviewDimension(height);
     }
 
-    const output_file = try std.fs.openFileAbsolute(output_path, .{});
-    defer output_file.close();
-    const stat = try output_file.stat();
-    const output_bytes = try output_file.readToEndAlloc(allocator, @intCast(stat.size));
+    return error.ResizeFailed;
+}
 
-    return .{
-        .bytes = output_bytes,
-        .content_type = "image/webp",
-    };
+fn scalePreviewDimension(value: u32) u32 {
+    if (value == 0) return 0;
+    const scaled = @max(@as(u32, 320), (value * 85) / 100);
+    return scaled;
 }
 
 fn extensionForContentType(content_type: []const u8) []const u8 {

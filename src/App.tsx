@@ -4439,9 +4439,9 @@ const App = () => {
   const activeImagePreviewUrl = createMemo(() => {
     const result = activeImageResult();
     return buildViewImageUrl(result?.storedUrl ?? result?.imageUrl ?? null, {
-      maxWidth: 1280,
-      maxHeight: 960,
-      quality: 76,
+      maxWidth: 960,
+      maxHeight: 720,
+      quality: 64,
     });
   });
   const activeLayoutStep = createMemo(() => {
@@ -4457,9 +4457,9 @@ const App = () => {
   const activeLayoutImageUrl = createMemo(() => {
     const result = activeLayoutResult();
     return buildViewImageUrl(result?.storedUrl ?? result?.imageUrl ?? null, {
-      maxWidth: 1600,
-      maxHeight: 1200,
-      quality: 82,
+      maxWidth: 1280,
+      maxHeight: 960,
+      quality: 68,
     });
   });
   const activeLayoutSettings = createMemo<BookLayoutSettings>(() => {
@@ -5074,9 +5074,9 @@ const App = () => {
       const rawImageUrl = normalizeClientImageUrl(result?.storedUrl ?? result?.imageUrl ?? undefined);
       if (!rawImageUrl) return [];
       const previewImageUrl = buildViewImageUrl(rawImageUrl, {
-        maxWidth: step.kind === "page" ? 1600 : 1280,
-        maxHeight: step.kind === "page" ? 1100 : 1600,
-        quality: 78,
+        maxWidth: step.kind === "page" ? 1280 : 960,
+        maxHeight: step.kind === "page" ? 900 : 1280,
+        quality: 66,
       });
       const geometry = getStepGeometry(settings, step);
       const kindLabel =
@@ -5335,9 +5335,9 @@ const App = () => {
     const pageId = `page-${publishedPreviewPageIndex() + 1}`;
     const pageResult = story.imageResultsSnapshot?.[pageId];
     return buildViewImageUrl(pageResult?.storedUrl ?? pageResult?.imageUrl ?? null, {
-      maxWidth: 720,
-      maxHeight: 900,
-      quality: 72,
+      maxWidth: 640,
+      maxHeight: 800,
+      quality: 62,
     });
   });
   const activePublishedPreviewText = createMemo(() => {
@@ -6557,9 +6557,9 @@ const App = () => {
             <img
               src={
                 buildViewImageUrl(sheet.imageUrl!, {
-                  maxWidth: isSpread ? 1600 : 1100,
-                  maxHeight: isSpread ? 1000 : 1400,
-                  quality: 76,
+                  maxWidth: isSpread ? 1280 : 900,
+                  maxHeight: isSpread ? 820 : 1180,
+                  quality: 64,
                 }) ?? sheet.imageUrl!
               }
               alt={sheet.label}
