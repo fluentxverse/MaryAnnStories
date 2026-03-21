@@ -373,11 +373,18 @@ export default function ImagesWorkspace(props: any) {
               <button class="image-frame image-frame-button" type="button" onClick={props.openGeneratedModal}>
                 <div class="image-art-stage">
                   <img
-                    src={props.activeImageUrl()!}
+                    src={props.activeImagePreviewUrl?.() ?? props.activeImageUrl()!}
+                    data-fullsrc={props.activeImageUrl?.() ?? ""}
                     alt={props.activeImageStep()?.label ?? "Generated story art"}
                     loading="eager"
                     decoding="async"
                     fetchpriority="high"
+                    onError={(event) => {
+                      const fallback = event.currentTarget.dataset.fullsrc;
+                      if (fallback && event.currentTarget.src !== fallback) {
+                        event.currentTarget.src = fallback;
+                      }
+                    }}
                   />
                   <Show when={props.showBackCoverPreviewImprint()}>
                     {props.renderBackCoverImprint("preview")}

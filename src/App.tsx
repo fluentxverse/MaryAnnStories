@@ -423,6 +423,7 @@ type ImageModalItem = {
   title: string;
   subtitle: string;
   imageUrl: string;
+  previewImageUrl?: string;
   source: "generated";
   prompt?: string;
   meta: Array<{ label: string; value: string }>;
@@ -4433,11 +4434,15 @@ const App = () => {
   });
   const activeImageUrl = createMemo(() => {
     const result = activeImageResult();
-    // Keep the main queue preview on the original proxied image path.
-    // The resized preview variant is great for browse-heavy surfaces, but this
-    // active preview needs to stay maximally reliable while the user reviews a
-    // single selected image.
     return normalizeClientImageUrl(result?.storedUrl ?? result?.imageUrl ?? undefined);
+  });
+  const activeImagePreviewUrl = createMemo(() => {
+    const result = activeImageResult();
+    return buildViewImageUrl(result?.storedUrl ?? result?.imageUrl ?? null, {
+      maxWidth: 1280,
+      maxHeight: 960,
+      quality: 76,
+    });
   });
   const activeLayoutStep = createMemo(() => {
     const story = finalStory();
@@ -5066,8 +5071,13 @@ const App = () => {
 
     return steps.flatMap((step) => {
       const result = results[step.id];
-      const imageUrl = result?.storedUrl ?? result?.imageUrl;
-      if (!imageUrl) return [];
+      const rawImageUrl = normalizeClientImageUrl(result?.storedUrl ?? result?.imageUrl ?? undefined);
+      if (!rawImageUrl) return [];
+      const previewImageUrl = buildViewImageUrl(rawImageUrl, {
+        maxWidth: step.kind === "page" ? 1600 : 1280,
+        maxHeight: step.kind === "page" ? 1100 : 1600,
+        quality: 78,
+      });
       const geometry = getStepGeometry(settings, step);
       const kindLabel =
         step.kind === "cover"
@@ -5081,7 +5091,8 @@ const App = () => {
           id: step.id,
           title: step.label,
           subtitle: kindLabel,
-          imageUrl,
+          imageUrl: rawImageUrl,
+          previewImageUrl,
           source: "generated",
           prompt: getEffectiveImagePrompt(step),
           meta: [
@@ -8926,6 +8937,7 @@ const imageMetaCards = createMemo(() => [
             formatTimestamp={formatTimestamp}
             restoreImageVersion={restoreImageVersion}
             activeImageUrl={activeImageUrl}
+            activeImagePreviewUrl={activeImagePreviewUrl}
             openGeneratedModal={openGeneratedModal}
             showBackCoverPreviewImprint={showBackCoverPreviewImprint}
             renderBackCoverImprint={renderBackCoverImprint}
@@ -9126,11 +9138,18 @@ const imageMetaCards = createMemo(() => [
               <div class="image-modal-preview">
                 <div class="image-modal-art-stage">
                   <img
-                    src={item().imageUrl}
+                    src={item().previewImageUrl ?? item().imageUrl}
+                    data-fullsrc={item().imageUrl}
                     alt={item().title}
                     loading="eager"
                     decoding="async"
                     fetchpriority="high"
+                    onError={(event) => {
+                      const fallback = event.currentTarget.dataset.fullsrc;
+                      if (fallback && event.currentTarget.src !== fallback) {
+                        event.currentTarget.src = fallback;
+                      }
+                    }}
                   />
                   <Show when={isBackCoverModalItem(item())}>
                     {renderBackCoverImprint("modal")}
