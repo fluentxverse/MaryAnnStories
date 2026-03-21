@@ -425,7 +425,6 @@ fn stripStoryListImageSettings(
     }
 
     _ = parsed.value.object.swapRemove("imageHistory");
-    _ = parsed.value.object.swapRemove("qaReviewNotes");
 
     var buffer = std.ArrayList(u8).init(allocator);
     errdefer buffer.deinit();

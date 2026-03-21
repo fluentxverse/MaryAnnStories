@@ -11,12 +11,7 @@ import {
   onMount,
 } from "solid-js";
 
-import {
-  buildPublishValidation,
-  buildStepQaWarnings,
-  type PublishChecklistItem,
-  type StepQaWarning,
-} from "./lib/bookProduction";
+import { buildPublishValidation, type PublishChecklistItem } from "./lib/bookProduction";
 
 const logoUrl = new URL("../assets/logo.png", import.meta.url).href;
 const runtimeApiBaseUrl = () => {
@@ -348,8 +343,6 @@ type ImageSettings = {
   printShowSafeZone: boolean;
   lockedSteps: Record<string, boolean>;
   imageHistory: Record<string, ImageVersionEntry[]>;
-  qaReviewedSteps: Record<string, boolean>;
-  qaReviewNotes: Record<string, string>;
 };
 
 type BookSizeOption = {
@@ -421,20 +414,6 @@ type ImageStepResult = {
   imageUrl?: string;
   storedUrl?: string;
   generatedAt?: string;
-  qaState?: "idle" | "running" | "complete" | "error";
-  qaReport?: ImageQaReport;
-  qaError?: string;
-};
-
-type ImageQaReport = {
-  summary: string;
-  checkedAt: string;
-  issues: StepQaWarning[];
-  imageWidth?: number;
-  imageHeight?: number;
-  expectedAspectRatio?: string;
-  expectedPixelWidth?: number;
-  expectedPixelHeight?: number;
 };
 
 type ImageModalItem = {
@@ -554,18 +533,6 @@ type ImageRecordResponse = {
 type ImageListResponse = {
   status: string;
   images: ImageRecordResponse[];
-};
-
-type ImageQaResponse = {
-  status?: string;
-  summary?: string;
-  issues?: Array<{
-    id?: string;
-    label?: string;
-    detail?: string;
-    severity?: "warning" | "blocker";
-  }>;
-  error?: string;
 };
 
 const ageBands = [
@@ -1143,8 +1110,6 @@ const cloneImageSettings = (settings: ImageSettings): ImageSettings => ({
       Array.isArray(value) ? value.map((entry) => ({ ...entry })) : [],
     ]),
   ),
-  qaReviewedSteps: { ...(settings.qaReviewedSteps ?? {}) },
-  qaReviewNotes: { ...(settings.qaReviewNotes ?? {}) },
 });
 
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string; note: string }> = [
@@ -1293,8 +1258,6 @@ const initialImageSettings: ImageSettings = {
   printShowSafeZone: true,
   lockedSteps: {},
   imageHistory: {},
-  qaReviewedSteps: {},
-  qaReviewNotes: {},
 };
 
 const getInitialColorMode = (): ColorMode => {
@@ -1662,26 +1625,6 @@ const normalizeImageSettingsSnapshot = (
           ]),
         )
       : {};
-  const qaReviewedSteps =
-    normalized.qaReviewedSteps &&
-    typeof normalized.qaReviewedSteps === "object" &&
-    !Array.isArray(normalized.qaReviewedSteps)
-      ? Object.fromEntries(
-          Object.entries(normalized.qaReviewedSteps).flatMap(([key, entry]) =>
-            typeof entry === "boolean" ? [[key, entry]] : [],
-          ),
-        )
-      : {};
-  const qaReviewNotes =
-    normalized.qaReviewNotes &&
-    typeof normalized.qaReviewNotes === "object" &&
-    !Array.isArray(normalized.qaReviewNotes)
-      ? Object.fromEntries(
-          Object.entries(normalized.qaReviewNotes).flatMap(([key, entry]) =>
-            typeof entry === "string" ? [[key, entry]] : [],
-          ),
-        )
-      : {};
   return {
     ...normalized,
     imageModel: hasSelectedModel ? normalized.imageModel : "server-default",
@@ -1782,8 +1725,6 @@ const normalizeImageSettingsSnapshot = (
         : initialImageSettings.printShowSafeZone,
     lockedSteps,
     imageHistory,
-    qaReviewedSteps,
-    qaReviewNotes,
   };
 };
 
@@ -1836,64 +1777,6 @@ const normalizeImageResultsSnapshot = (
         typeof entry.storedUrl === "string" ? entry.storedUrl : undefined,
       ),
       generatedAt: typeof entry.generatedAt === "string" ? entry.generatedAt : undefined,
-      qaState:
-        entry.qaState === "running" ||
-        entry.qaState === "complete" ||
-        entry.qaState === "error"
-          ? entry.qaState
-          : status === "idle"
-            ? "idle"
-            : undefined,
-      qaError: typeof entry.qaError === "string" ? entry.qaError : undefined,
-      qaReport:
-        entry.qaReport &&
-        typeof entry.qaReport === "object" &&
-        !Array.isArray(entry.qaReport)
-          ? {
-              summary:
-                typeof entry.qaReport.summary === "string" ? entry.qaReport.summary : "",
-              checkedAt:
-                typeof entry.qaReport.checkedAt === "string"
-                  ? entry.qaReport.checkedAt
-                  : "",
-              issues: Array.isArray(entry.qaReport.issues)
-                ? entry.qaReport.issues
-                    .filter(
-                      (issue): issue is StepQaWarning =>
-                        Boolean(issue) &&
-                        typeof issue === "object" &&
-                        typeof issue.id === "string" &&
-                        typeof issue.label === "string" &&
-                        typeof issue.detail === "string" &&
-                        (issue.severity === "warning" || issue.severity === "blocker"),
-                    )
-                : [],
-              imageWidth:
-                typeof entry.qaReport.imageWidth === "number" &&
-                Number.isFinite(entry.qaReport.imageWidth)
-                  ? entry.qaReport.imageWidth
-                  : undefined,
-              imageHeight:
-                typeof entry.qaReport.imageHeight === "number" &&
-                Number.isFinite(entry.qaReport.imageHeight)
-                  ? entry.qaReport.imageHeight
-                  : undefined,
-              expectedAspectRatio:
-                typeof entry.qaReport.expectedAspectRatio === "string"
-                  ? entry.qaReport.expectedAspectRatio
-                  : undefined,
-              expectedPixelWidth:
-                typeof entry.qaReport.expectedPixelWidth === "number" &&
-                Number.isFinite(entry.qaReport.expectedPixelWidth)
-                  ? entry.qaReport.expectedPixelWidth
-                  : undefined,
-              expectedPixelHeight:
-                typeof entry.qaReport.expectedPixelHeight === "number" &&
-                Number.isFinite(entry.qaReport.expectedPixelHeight)
-                  ? entry.qaReport.expectedPixelHeight
-                  : undefined,
-            }
-          : undefined,
     };
   }
 
@@ -3784,33 +3667,6 @@ const readImageMetrics = async (src: string) => {
   }
 };
 
-const normalizeImageQaResponse = (
-  payload: ImageQaResponse | null,
-): Pick<ImageQaReport, "summary" | "issues"> => ({
-  summary:
-    typeof payload?.summary === "string"
-      ? payload.summary
-      : "Automated QA finished with no additional summary.",
-  issues: Array.isArray(payload?.issues)
-    ? payload.issues
-        .filter(
-          (issue): issue is NonNullable<ImageQaResponse["issues"]>[number] =>
-            Boolean(issue) &&
-            typeof issue === "object" &&
-            typeof issue.id === "string" &&
-            typeof issue.label === "string" &&
-            typeof issue.detail === "string" &&
-            (issue.severity === "warning" || issue.severity === "blocker"),
-        )
-        .map((issue) => ({
-          id: issue.id!,
-          label: issue.label!,
-          detail: issue.detail!,
-          severity: issue.severity!,
-        }))
-    : [],
-});
-
 const normalizeImageToGeometry = async (
   src: string,
   geometry: StepGeometry,
@@ -4677,118 +4533,6 @@ const App = () => {
     setHasTouched(true);
     setReadyOverride(null);
   };
-  const setImageStepQaReviewed = (stepId: string, reviewed: boolean) => {
-    setImageSettings((current) => ({
-      ...current,
-      qaReviewedSteps: {
-        ...current.qaReviewedSteps,
-        [stepId]: reviewed,
-      },
-    }));
-    setHasTouched(true);
-    setReadyOverride(null);
-  };
-  const updateImageQaReviewNote = (stepId: string, value: string) => {
-    setImageSettings((current) => ({
-      ...current,
-      qaReviewNotes: {
-        ...current.qaReviewNotes,
-        [stepId]: value,
-      },
-    }));
-    setHasTouched(true);
-    setReadyOverride(null);
-  };
-  const setImageStepQaStatus = (
-    stepId: string,
-    patch: Partial<Pick<ImageStepResult, "qaState" | "qaReport" | "qaError">>,
-  ) => {
-    setImageStepResults((current) => {
-      const existing = current[stepId];
-      if (!existing) return current;
-      return {
-        ...current,
-        [stepId]: {
-          ...existing,
-          ...patch,
-        },
-      };
-    });
-  };
-  const runAutomatedImageQa = async (
-    step: ImageStep,
-    imageRef: string,
-    prompt: string,
-    geometry: StepGeometry,
-  ) => {
-    setImageStepQaStatus(step.id, {
-      qaState: "running",
-      qaError: undefined,
-    });
-
-    try {
-      const storyText =
-        step.kind === "page" ? finalStory()?.pages[step.pageIndex ?? 0] ?? "" : "";
-      const builderState = builder();
-      const cast = buildCastFromState(builderState);
-      const additionalCharacters = builderState.additionalCharacters ?? [];
-      const sameCastRisk =
-        cast.castList.length >= 2 &&
-        [builderState.protagonistGender, ...additionalCharacters.map((character) => character.gender)]
-          .map((value) => normalizeWhitespace(value).toLowerCase())
-          .filter((value) => value.length > 0).length >= 2;
-
-      const qaImageRef = imageRef.startsWith("data:")
-        ? imageRef
-        : await fetchImageAsDataUrl(imageRef);
-
-      const [metrics, response] = await Promise.all([
-        readImageMetrics(imageRef),
-        authorizedFetch(`${apiBaseUrl}/api/images/qa`, {
-          method: "POST",
-          body: JSON.stringify({
-            image: qaImageRef,
-            prompt,
-            story_text: storyText,
-            step_kind: step.kind,
-            step_label: step.label,
-            expected_aspect_ratio: geometry.aspectRatioLabel,
-            expected_trim_label: geometry.trimLabel,
-            same_cast_risk: sameCastRisk,
-          }),
-        }),
-      ]);
-
-      const payload = (await response.json().catch(() => null)) as ImageQaResponse | null;
-      if (!response.ok) {
-        throw new Error(payload?.error ?? "Automated image QA could not finish.");
-      }
-
-      const normalized = normalizeImageQaResponse(payload);
-      const checkedAt = new Date().toISOString();
-      setImageStepQaStatus(step.id, {
-        qaState: "complete",
-        qaError: undefined,
-        qaReport: {
-          summary: normalized.summary,
-          checkedAt,
-          issues: normalized.issues,
-          imageWidth: metrics.width,
-          imageHeight: metrics.height,
-          expectedAspectRatio: geometry.aspectRatioLabel,
-          expectedPixelWidth: geometry.pixelWidth,
-          expectedPixelHeight: geometry.pixelHeight,
-        },
-      });
-      setImageStepQaReviewed(step.id, false);
-    } catch (error) {
-      setImageStepQaStatus(step.id, {
-        qaState: "error",
-        qaError:
-          error instanceof Error ? error.message : "Automated QA is unavailable right now.",
-      });
-    }
-  };
   const activeImageHistory = createMemo(() => {
     const step = activeImageStep();
     if (!step) return [] as ImageVersionEntry[];
@@ -4799,85 +4543,7 @@ const App = () => {
     if (!step) return false;
     return Boolean(imageSettings().lockedSteps[step.id]);
   });
-  const activeImageQaReviewed = createMemo(() => {
-    const step = activeImageStep();
-    if (!step) return false;
-    return Boolean(imageSettings().qaReviewedSteps[step.id]);
-  });
-  const activeImageQaReviewNote = createMemo(() => {
-    const step = activeImageStep();
-    if (!step) return "";
-    return imageSettings().qaReviewNotes[step.id] ?? "";
-  });
-  const activeImageQaWarnings = createMemo<StepQaWarning[]>(() => {
-    const step = activeImageStep();
-    if (!step) return [];
-    const storyText =
-      step.kind === "page" ? finalStory()?.pages[step.pageIndex ?? 0] ?? "" : "";
-    const result = imageStepResults()[step.id] ?? { status: "idle" as const };
-    const builderState = builder();
-    const cast = buildCastFromState(builderState);
-    const additionalCharacters = builderState.additionalCharacters ?? [];
-    const geometry = getStepGeometry(imageSettings(), step);
-    const sameCastRisk =
-      cast.castList.length >= 2 &&
-      [builderState.protagonistGender, ...additionalCharacters.map((character) => character.gender)]
-        .map((value) => normalizeWhitespace(value).toLowerCase())
-        .filter((value) => value.length > 0).length >= 2;
-    return buildStepQaWarnings({
-      step: {
-        id: step.id,
-        label: step.label,
-        kind: step.kind,
-      },
-      prompt: activeImagePrompt(),
-      storyText,
-      status: result.status,
-      sameCastRisk,
-      expectedAspectRatioLabel: geometry.aspectRatioLabel,
-      expectedPixelWidth: geometry.pixelWidth,
-      expectedPixelHeight: geometry.pixelHeight,
-      actualPixelWidth: result.qaReport?.imageWidth,
-      actualPixelHeight: result.qaReport?.imageHeight,
-      automatedIssues: result.qaReport?.issues ?? [],
-      qaFailed: result.qaState === "error",
-    });
-  });
-  const activeImageQaReport = createMemo(() => activeImageResult()?.qaReport ?? null);
-  const activeImageQaStatus = createMemo(() => activeImageResult()?.qaState ?? "idle");
-  const activeImageQaBlockerCount = createMemo(
-    () =>
-      activeImageQaReport()?.issues.filter((issue) => issue.severity === "blocker").length ??
-      0,
-  );
-  const activeImageNeedsQaBlockerReview = createMemo(
-    () => activeImageQaBlockerCount() > 0 && !activeImageQaReviewed(),
-  );
-  const canAcceptActiveImage = createMemo(
-    () =>
-      !isAcceptingImage() &&
-      activeImageQaStatus() !== "running" &&
-      !activeImageNeedsQaBlockerReview(),
-  );
-  const unresolvedQaStepIds = createMemo(() =>
-    imageSteps()
-      .filter((step) => {
-        const result = imageStepResults()[step.id];
-        if (result?.status !== "saved") return false;
-        return !imageSettings().qaReviewedSteps[step.id];
-      })
-      .map((step) => step.id),
-  );
-  const unresolvedQaBlockerStepIds = createMemo(() =>
-    imageSteps()
-      .filter((step) => {
-        const result = imageStepResults()[step.id];
-        if (result?.status !== "saved") return false;
-        if (imageSettings().qaReviewedSteps[step.id]) return false;
-        return Boolean(result.qaReport?.issues.some((issue) => issue.severity === "blocker"));
-      })
-      .map((step) => step.id),
-  );
+  const canAcceptActiveImage = createMemo(() => !isAcceptingImage());
   const publishValidation = createMemo(() => {
     const story = finalStory();
     const steps = imageSteps();
@@ -4902,36 +4568,9 @@ const App = () => {
       showBackCoverSlogan: imageSettings().backCoverShowSlogan,
       backCoverSlogan: resolvedBackCoverSlogan(),
       printBleedInches: imageSettings().printBleedInches,
-      unresolvedQaCount: unresolvedQaStepIds().length,
-      unresolvedQaBlockerCount: unresolvedQaBlockerStepIds().length,
       lockedSavedCount,
       hasFinalStory: Boolean(story),
     });
-  });
-  createEffect(() => {
-    const step = activeImageStep();
-    const result = activeImageResult();
-    const prompt = activeImagePrompt().trim();
-    const geometry = activeImageGeometry();
-    if (
-      activeTab() !== "images" ||
-      !authReady() ||
-      !authSession() ||
-      !authUser() ||
-      !step ||
-      !prompt ||
-      !result ||
-      (result.status !== "generated" && result.status !== "saved") ||
-      result.qaState === "running" ||
-      Boolean(result.qaReport) ||
-      Boolean(result.qaError)
-    ) {
-      return;
-    }
-
-    const imageRef = result.imageUrl ?? result.storedUrl;
-    if (!imageRef) return;
-    void runAutomatedImageQa(step, imageRef, prompt, geometry);
   });
   const bookEmulatorSheets = createMemo<BookEmulatorSheet[]>(() => {
     if (activeTab() !== "layout" && !isExportingPdf() && !isExportingPrintPackage()) {
@@ -7148,13 +6787,9 @@ const imageMetaCards = createMemo(() => [
         imageUrl: entry.imageUrl ?? entry.storedUrl,
         storedUrl: undefined,
         generatedAt: formatTimestamp(entry.createdAt),
-        qaState: "idle",
-        qaReport: undefined,
-        qaError: undefined,
       },
     }));
     setImageStepLock(step.id, false);
-    setImageStepQaReviewed(step.id, false);
     updateImagePromptOverride(step.id, entry.prompt);
     setHasGeneratedImages(true);
     setImageError(null);
@@ -7165,12 +6800,6 @@ const imageMetaCards = createMemo(() => [
     const step = activeImageStep();
     if (!step) return;
     setImageStepLock(step.id, !activeImageLocked());
-  };
-
-  const markActiveImageQaReviewed = () => {
-    const step = activeImageStep();
-    if (!step) return;
-    setImageStepQaReviewed(step.id, true);
   };
 
   const goBookEmulatorToIndex = (index: number) => {
@@ -7395,8 +7024,6 @@ const imageMetaCards = createMemo(() => [
       ...current,
       lockedSteps: {},
       imageHistory: {},
-      qaReviewedSteps: {},
-      qaReviewNotes: {},
       promptOverrides: {},
     }));
     setHasGeneratedImages(false);
@@ -7705,14 +7332,9 @@ const imageMetaCards = createMemo(() => [
             status: "generated",
             imageUrl: normalizedImageUrl,
             generatedAt,
-            qaState: "running",
-            qaReport: undefined,
-            qaError: undefined,
           },
         }));
         pushImageHistoryEntry(step.id, historyEntry);
-        setImageStepQaReviewed(step.id, false);
-        void runAutomatedImageQa(step, normalizedImageUrl, prompt, geometry);
       } else {
         setImageError("Image response did not include a usable URL.");
       }
@@ -7773,9 +7395,6 @@ const imageMetaCards = createMemo(() => [
         imageUrl: normalizeClientImageUrl(result?.imageUrl ?? imageRef),
         storedUrl: storedUrl ?? normalizeClientImageUrl(imageRef),
         generatedAt: result?.generatedAt,
-        qaState: result?.qaState,
-        qaReport: result?.qaReport,
-        qaError: result?.qaError,
       };
       setImageStepResults((current) => ({
         ...current,
@@ -8978,8 +8597,6 @@ const imageMetaCards = createMemo(() => [
             handleAcceptImage={handleAcceptImage}
             canAcceptActiveImage={canAcceptActiveImage}
             isAcceptingImage={isAcceptingImage}
-            activeImageQaStatus={activeImageQaStatus}
-            activeImageNeedsQaBlockerReview={activeImageNeedsQaBlockerReview}
             toggleActiveImageLock={toggleActiveImageLock}
             requestResetImages={requestResetImages}
             setActiveTab={setActiveTab}
@@ -8989,13 +8606,6 @@ const imageMetaCards = createMemo(() => [
             imageError={imageError}
             acceptError={acceptError}
             lastImagesGeneratedAt={lastImagesGeneratedAt}
-            activeImageQaReviewed={activeImageQaReviewed}
-            activeImageQaReport={activeImageQaReport}
-            markActiveImageQaReviewed={markActiveImageQaReviewed}
-            activeImageQaWarnings={activeImageQaWarnings}
-            renderFieldLabel={renderFieldLabel}
-            activeImageQaReviewNote={activeImageQaReviewNote}
-            updateImageQaReviewNote={updateImageQaReviewNote}
             activeImageHistory={activeImageHistory}
             formatTimestamp={formatTimestamp}
             restoreImageVersion={restoreImageVersion}

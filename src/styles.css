@@ -3080,10 +3080,6 @@ body[data-theme="light"] .image-placeholder-card {
   background: color-mix(in srgb, var(--panel) 78%, transparent);
 }
 
-.image-qa-list {
-  margin-bottom: 8px;
-}
-
 .inline-select {
   display: grid;
   gap: 6px;

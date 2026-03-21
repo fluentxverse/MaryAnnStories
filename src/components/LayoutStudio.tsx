@@ -603,7 +603,7 @@ export default function LayoutStudio(props: any) {
                 <p class="panel-kicker">Publish checklist</p>
                 <h3>Ready to publish</h3>
                 <p class="subtle-text">
-                  This validation pass catches missing export metadata and incomplete QA review
+                  This validation pass catches missing export metadata before the final export
                   before files go out.
                 </p>
               </div>

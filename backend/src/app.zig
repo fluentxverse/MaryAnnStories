@@ -35,7 +35,6 @@ pub const App = struct {
                 cfg.openai_api_key,
                 cfg.openai_story_model,
                 cfg.openai_image_model,
-                cfg.openai_image_qa_model,
             ),
             .gemini = gemini.Client.init(
                 cfg.gemini_base_url,

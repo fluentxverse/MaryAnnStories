@@ -52,7 +52,6 @@ pub fn main() !void {
     try server.router.post("/api/images/reset", image_route.reset);
     try server.router.get("/api/images/proxy", image_route.proxy);
     try server.router.post("/api/images/proxy", image_route.proxy);
-    try server.router.post("/api/images/qa", image_route.qa);
 
     try server.listen();
 }

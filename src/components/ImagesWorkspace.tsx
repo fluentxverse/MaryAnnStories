@@ -163,21 +163,17 @@ export default function ImagesWorkspace(props: any) {
                         : "Regenerate"}
                   </button>
                   <Show when={props.activeImageResult()?.status === "generated"}>
-                    <button
-                      class="button primary"
-                      type="button"
-                      onClick={props.handleAcceptImage}
-                      disabled={!props.canAcceptActiveImage()}
-                    >
-                      {props.isAcceptingImage()
+                  <button
+                    class="button primary"
+                    type="button"
+                    onClick={props.handleAcceptImage}
+                    disabled={!props.canAcceptActiveImage()}
+                  >
+                    {props.isAcceptingImage()
                         ? "Saving..."
-                        : props.activeImageQaStatus() === "running"
-                          ? "QA running..."
-                          : props.activeImageNeedsQaBlockerReview()
-                            ? "Review blockers first"
-                            : "Accept & save"}
-                    </button>
-                  </Show>
+                        : "Accept & save"}
+                  </button>
+                </Show>
                   <Show when={props.activeImageResult()?.status === "saved"}>
                     <span class="saved-pill">Saved</span>
                   </Show>
@@ -230,88 +226,6 @@ export default function ImagesWorkspace(props: any) {
             <Show when={props.activeImageResult()?.status === "saved"}>
               <div class="generated-banner">Image saved to story library.</div>
             </Show>
-
-            <div class="production-card image-qa-card">
-              <div class="prompt-editor-header">
-                <div>
-                  <span class="detail-label">Image QA</span>
-                  <strong>
-                    {props.activeImageQaStatus() === "running"
-                      ? "Analyzing"
-                      : props.activeImageQaReviewed()
-                        ? "Reviewed"
-                        : props.activeImageQaReport()?.issues.length
-                          ? "Needs review"
-                          : props.activeImageQaStatus() === "complete"
-                            ? "Clean pass"
-                            : "Needs review"}
-                  </strong>
-                </div>
-                <button
-                  class="button subtle"
-                  type="button"
-                  onClick={props.markActiveImageQaReviewed}
-                  disabled={!props.activeImageStep()}
-                >
-                  Mark reviewed
-                </button>
-              </div>
-              <Show when={props.activeImageQaStatus() === "running"}>
-                <div class="panel-note panel-note-inline">
-                  We are checking the generated art for readable text, safety, reflections,
-                  character drift, anatomy, and book/mockup artifacts.
-                </div>
-              </Show>
-              <Show when={props.activeImageQaReport()?.summary}>
-                <div class="panel-note panel-note-inline">{props.activeImageQaReport()!.summary}</div>
-              </Show>
-              <Show when={props.activeImageResult()?.qaError}>
-                <div class="panel-note panel-note-inline">
-                  Automated QA is unavailable right now. You can still review the image manually
-                  before saving or exporting.
-                </div>
-              </Show>
-              <Show
-                when={props.activeImageQaWarnings().length > 0}
-                fallback={
-                  <div class="panel-note panel-note-inline">
-                    This step does not have any special QA reminders right now.
-                  </div>
-                }
-              >
-                <ul class="publish-checklist image-qa-list">
-                  <For each={props.activeImageQaWarnings()}>
-                    {(warning) => (
-                      <li class={`publish-checklist-item ${warning.severity}`}>
-                        <div>
-                          <strong>{warning.label}</strong>
-                          <p>{warning.detail}</p>
-                        </div>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </Show>
-              <Show when={props.activeImageNeedsQaBlockerReview()}>
-                <div class="panel-note panel-note-inline">
-                  Review the blocker-level QA findings and mark this step reviewed before you save
-                  it into the story library.
-                </div>
-              </Show>
-              <label class="field">
-                {props.renderFieldLabel("Review notes", false)}
-                <textarea
-                  rows={3}
-                  value={props.activeImageQaReviewNote()}
-                  placeholder="Optional notes about reflections, text, safety, or character drift."
-                  onInput={(event) => {
-                    const step = props.activeImageStep();
-                    if (!step) return;
-                    props.updateImageQaReviewNote(step.id, event.currentTarget.value);
-                  }}
-                />
-              </label>
-            </div>
 
             <div class="production-card image-history-card">
               <div class="prompt-editor-header">

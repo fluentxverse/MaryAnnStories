@@ -22,7 +22,6 @@ pub const Config = struct {
     openai_base_url: []const u8,
     openai_story_model: []const u8,
     openai_image_model: []const u8,
-    openai_image_qa_model: []const u8,
     gemini_api_key: ?[]const u8,
     gemini_base_url: []const u8,
     gemini_image_model: []const u8,
@@ -61,7 +60,6 @@ pub fn load(allocator: std.mem.Allocator) !Config {
     const openai_base_url = env.get("OPENAI_BASE_URL") orelse "https://api.openai.com/v1";
     const openai_story_model = env.get("OPENAI_STORY_MODEL") orelse "gpt-5.2";
     const openai_image_model = env.get("OPENAI_IMAGE_MODEL") orelse "dall-e-3";
-    const openai_image_qa_model = env.get("OPENAI_IMAGE_QA_MODEL") orelse "gpt-4.1-mini";
     const raw_gemini_key = env.get("GEMINI_API_KEY") orelse env.get("GOOGLE_API_KEY");
     const gemini_api_key = if (raw_gemini_key) |key|
         if (key.len == 0) null else key
@@ -108,7 +106,6 @@ pub fn load(allocator: std.mem.Allocator) !Config {
         .openai_base_url = openai_base_url,
         .openai_story_model = openai_story_model,
         .openai_image_model = openai_image_model,
-        .openai_image_qa_model = openai_image_qa_model,
         .gemini_api_key = gemini_api_key,
         .gemini_base_url = gemini_base_url,
         .gemini_image_model = gemini_image_model,

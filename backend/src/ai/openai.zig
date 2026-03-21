@@ -5,21 +5,18 @@ pub const Client = struct {
     api_key: ?[]const u8,
     story_model: []const u8,
     image_model: []const u8,
-    image_qa_model: []const u8,
 
     pub fn init(
         base_url: []const u8,
         api_key: ?[]const u8,
         story_model: []const u8,
         image_model: []const u8,
-        image_qa_model: []const u8,
     ) Client {
         return .{
             .base_url = base_url,
             .api_key = api_key,
             .story_model = story_model,
             .image_model = image_model,
-            .image_qa_model = image_qa_model,
         };
     }
 
@@ -71,97 +68,6 @@ pub const Client = struct {
         return try sendRequest(allocator, url, api_key, payload.items);
     }
 
-    pub fn analyzeImageQa(
-        self: *const Client,
-        allocator: std.mem.Allocator,
-        instructions: []const u8,
-        image_bytes: []const u8,
-        mime_type: []const u8,
-    ) ![]u8 {
-        const api_key = self.api_key orelse return error.OpenAiApiKeyMissing;
-
-        const url = try buildUrl(allocator, self.base_url, "chat/completions");
-        defer allocator.free(url);
-
-        const data_url = try buildDataUrl(allocator, image_bytes, mime_type);
-        defer allocator.free(data_url);
-
-        const system_parts = [_]ChatContentPart{
-            .{ .type = "text", .text = qa_system_prompt },
-        };
-        const user_parts = [_]ChatContentPart{
-            .{ .type = "text", .text = instructions },
-            .{
-                .type = "image_url",
-                .image_url = .{ .url = data_url },
-            },
-        };
-        const messages = [_]ChatMessage{
-            .{
-                .role = "system",
-                .content = system_parts[0..],
-            },
-            .{
-                .role = "user",
-                .content = user_parts[0..],
-            },
-        };
-
-        var payload = std.ArrayList(u8).init(allocator);
-        defer payload.deinit();
-        try std.json.stringify(.{
-            .model = self.image_qa_model,
-            .temperature = 0,
-            .response_format = .{ .type = "json_object" },
-            .messages = messages[0..],
-        }, .{}, payload.writer());
-
-        return try sendRequest(allocator, url, api_key, payload.items);
-    }
-};
-
-const qa_system_prompt =
-    "You are a strict but practical storybook image QA assistant. "
-    ++ "Inspect the supplied image against the provided context. "
-    ++ "Return only JSON with this shape: "
-    ++ "{\"summary\":string,\"issues\":[{\"id\":string,\"label\":string,\"detail\":string,\"severity\":\"warning\"|\"blocker\"}]}. "
-    ++ "Only include issues that are clearly visible or strongly likely from the image. "
-    ++ "Possible issue ids: stray_text, unsafe_staging, broken_reflections, bad_anatomy, character_continuity, aspect_composition, book_mockup. "
-    ++ "Use blocker only when the image is unfit to save or export without correction. "
-    ++ "Do not invent hidden problems. "
-    ++ "Do not include markdown fences or any text outside the JSON object.";
-
-const ChatMessage = struct {
-    role: []const u8,
-    content: []const ChatContentPart,
-};
-
-const ChatContentPart = struct {
-    type: []const u8,
-    text: ?[]const u8 = null,
-    image_url: ?ChatImageUrl = null,
-
-    pub fn jsonStringify(self: ChatContentPart, jw: anytype) !void {
-        try jw.beginObject();
-        try jw.objectField("type");
-        try jw.write(self.type);
-
-        if (self.text) |value| {
-            try jw.objectField("text");
-            try jw.write(value);
-        }
-
-        if (self.image_url) |value| {
-            try jw.objectField("image_url");
-            try jw.write(value);
-        }
-
-        try jw.endObject();
-    }
-};
-
-const ChatImageUrl = struct {
-    url: []const u8,
 };
 
 fn sendRequest(
