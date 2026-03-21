@@ -283,10 +283,17 @@ export default function LayoutStudio(props: any) {
                   >
                     <img
                       src={props.activeLayoutImageUrl()!}
+                      data-fullsrc={props.activeLayoutFullImageUrl?.() ?? ""}
                       alt={`Storybook art for page ${props.finalPageIndex() + 1}`}
                       loading="eager"
                       decoding="async"
                       fetchpriority="high"
+                      onError={(event) => {
+                        const fallback = event.currentTarget.dataset.fullsrc;
+                        if (fallback && event.currentTarget.src !== fallback) {
+                          event.currentTarget.src = fallback;
+                        }
+                      }}
                     />
                   </Show>
                 </div>
@@ -388,6 +395,108 @@ export default function LayoutStudio(props: any) {
                   <span class="field-help">
                     Leave blank to use the current story layout URL automatically.
                   </span>
+                </label>
+              </div>
+
+              <div class="layout-control-grid">
+                <label class="reader-slider layout-slider">
+                  <span>Logo size</span>
+                  <input
+                    type="range"
+                    min="0.65"
+                    max="1.9"
+                    step="0.05"
+                    value={props.imageSettings().backCoverLogoScale}
+                    onInput={(event) =>
+                      props.updateImageSetting(
+                        "backCoverLogoScale",
+                        parseFloat(event.currentTarget.value),
+                      )
+                    }
+                  />
+                  <strong>{props.imageSettings().backCoverLogoScale.toFixed(2)}x</strong>
+                </label>
+
+                <label class="reader-slider layout-slider">
+                  <span>Age band size</span>
+                  <input
+                    type="range"
+                    min="0.65"
+                    max="1.9"
+                    step="0.05"
+                    value={props.imageSettings().backCoverAgeBandScale}
+                    onInput={(event) =>
+                      props.updateImageSetting(
+                        "backCoverAgeBandScale",
+                        parseFloat(event.currentTarget.value),
+                      )
+                    }
+                  />
+                  <strong>{props.imageSettings().backCoverAgeBandScale.toFixed(2)}x</strong>
+                </label>
+              </div>
+
+              <div class="layout-control-grid">
+                <label class="reader-slider layout-slider">
+                  <span>QR size</span>
+                  <input
+                    type="range"
+                    min="0.65"
+                    max="1.9"
+                    step="0.05"
+                    value={props.imageSettings().backCoverQrScale}
+                    onInput={(event) =>
+                      props.updateImageSetting(
+                        "backCoverQrScale",
+                        parseFloat(event.currentTarget.value),
+                      )
+                    }
+                  />
+                  <strong>{props.imageSettings().backCoverQrScale.toFixed(2)}x</strong>
+                </label>
+
+                <label class="reader-slider layout-slider">
+                  <span>Horizontal position</span>
+                  <input
+                    type="range"
+                    min="-24"
+                    max="24"
+                    step="1"
+                    value={props.imageSettings().backCoverOffsetX}
+                    onInput={(event) =>
+                      props.updateImageSetting(
+                        "backCoverOffsetX",
+                        parseFloat(event.currentTarget.value),
+                      )
+                    }
+                  />
+                  <strong>
+                    {props.imageSettings().backCoverOffsetX > 0 ? "+" : ""}
+                    {props.imageSettings().backCoverOffsetX}%
+                  </strong>
+                </label>
+              </div>
+
+              <div class="layout-control-grid single">
+                <label class="reader-slider layout-slider">
+                  <span>Vertical position</span>
+                  <input
+                    type="range"
+                    min="-12"
+                    max="28"
+                    step="1"
+                    value={props.imageSettings().backCoverOffsetY}
+                    onInput={(event) =>
+                      props.updateImageSetting(
+                        "backCoverOffsetY",
+                        parseFloat(event.currentTarget.value),
+                      )
+                    }
+                  />
+                  <strong>
+                    {props.imageSettings().backCoverOffsetY > 0 ? "+" : ""}
+                    {props.imageSettings().backCoverOffsetY}%
+                  </strong>
                 </label>
               </div>
 

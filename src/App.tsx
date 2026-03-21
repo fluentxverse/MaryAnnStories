@@ -324,6 +324,11 @@ type ImageSettings = {
   backCoverShowQr: boolean;
   backCoverShowBarcode: boolean;
   backCoverBarcodeText: string;
+  backCoverOffsetX: number;
+  backCoverOffsetY: number;
+  backCoverLogoScale: number;
+  backCoverAgeBandScale: number;
+  backCoverQrScale: number;
   printBleedInches: number;
   printShowTrimMarks: boolean;
   printShowSafeZone: boolean;
@@ -435,6 +440,7 @@ type BookEmulatorSheet = {
   subtitle: string;
   kind: "cover" | "back_cover" | "page";
   imageUrl?: string;
+  previewImageUrl?: string;
   geometry: StepGeometry;
   status: "idle" | "generated" | "saved";
   text: string;
@@ -1263,6 +1269,11 @@ const initialImageSettings: ImageSettings = {
   backCoverShowQr: true,
   backCoverShowBarcode: false,
   backCoverBarcodeText: "",
+  backCoverOffsetX: 0,
+  backCoverOffsetY: 0,
+  backCoverLogoScale: 1,
+  backCoverAgeBandScale: 1,
+  backCoverQrScale: 1,
   printBleedInches: defaultPrintBleedInches,
   printShowTrimMarks: true,
   printShowSafeZone: true,
@@ -1722,6 +1733,26 @@ const normalizeImageSettingsSnapshot = (
       typeof normalized.backCoverBarcodeText === "string"
         ? normalized.backCoverBarcodeText
         : initialImageSettings.backCoverBarcodeText,
+    backCoverOffsetX:
+      typeof normalized.backCoverOffsetX === "number" && Number.isFinite(normalized.backCoverOffsetX)
+        ? clampNumber(normalized.backCoverOffsetX, -24, 24)
+        : initialImageSettings.backCoverOffsetX,
+    backCoverOffsetY:
+      typeof normalized.backCoverOffsetY === "number" && Number.isFinite(normalized.backCoverOffsetY)
+        ? clampNumber(normalized.backCoverOffsetY, -12, 28)
+        : initialImageSettings.backCoverOffsetY,
+    backCoverLogoScale:
+      typeof normalized.backCoverLogoScale === "number" && Number.isFinite(normalized.backCoverLogoScale)
+        ? clampNumber(normalized.backCoverLogoScale, 0.65, 1.9)
+        : initialImageSettings.backCoverLogoScale,
+    backCoverAgeBandScale:
+      typeof normalized.backCoverAgeBandScale === "number" && Number.isFinite(normalized.backCoverAgeBandScale)
+        ? clampNumber(normalized.backCoverAgeBandScale, 0.65, 1.9)
+        : initialImageSettings.backCoverAgeBandScale,
+    backCoverQrScale:
+      typeof normalized.backCoverQrScale === "number" && Number.isFinite(normalized.backCoverQrScale)
+        ? clampNumber(normalized.backCoverQrScale, 0.65, 1.9)
+        : initialImageSettings.backCoverQrScale,
     printBleedInches:
       typeof normalized.printBleedInches === "number" &&
       Number.isFinite(normalized.printBleedInches)
@@ -4462,6 +4493,10 @@ const App = () => {
       quality: 68,
     });
   });
+  const activeLayoutFullImageUrl = createMemo(() => {
+    const result = activeLayoutResult();
+    return normalizeClientImageUrl(result?.storedUrl ?? result?.imageUrl ?? undefined);
+  });
   const activeLayoutSettings = createMemo<BookLayoutSettings>(() => {
     const pageKey = `page-${finalPageIndex() + 1}`;
     return getBookLayoutSettingsForPageId(imageSettings(), pageKey);
@@ -4904,7 +4939,15 @@ const App = () => {
     const results = imageStepResults();
     return imageSteps().map((step) => {
       const result = results[step.id] ?? { status: "idle" as const };
-      const imageUrl = result.storedUrl ?? result.imageUrl;
+      const imageUrl = normalizeClientImageUrl(result.storedUrl ?? result.imageUrl ?? undefined);
+      const isSpreadPreview = step.kind === "page";
+      const previewImageUrl = imageUrl
+        ? buildViewImageUrl(imageUrl, {
+            maxWidth: isSpreadPreview ? 1280 : 900,
+            maxHeight: isSpreadPreview ? 820 : 1180,
+            quality: 64,
+          })
+        : undefined;
       const isPage = step.kind === "page";
       return {
         id: step.id,
@@ -4917,6 +4960,7 @@ const App = () => {
               : `Page ${(step.pageIndex ?? 0) + 1}`,
         kind: step.kind,
         imageUrl,
+        previewImageUrl,
         geometry: getStepGeometry(settings, step),
         status: result.status,
         text: isPage ? story.pages[step.pageIndex ?? 0] ?? "" : "",
@@ -5727,7 +5771,7 @@ const App = () => {
     if (
       !authReady() ||
       !storyId ||
-      activeTab() !== "images" ||
+      (activeTab() !== "images" && activeTab() !== "layout") ||
       !authUser() ||
       !authSession()
     ) {
@@ -5921,7 +5965,16 @@ const App = () => {
   };
 
   const renderBackCoverImprint = (variant: "preview" | "modal" | "emulator") => (
-    <div class={`back-cover-imprint ${variant}`}>
+    <div
+      class={`back-cover-imprint ${variant}`}
+      style={{
+        "--back-cover-offset-x": `${imageSettings().backCoverOffsetX}%`,
+        "--back-cover-offset-y": `${imageSettings().backCoverOffsetY}%`,
+        "--back-cover-logo-scale": String(imageSettings().backCoverLogoScale),
+        "--back-cover-age-scale": String(imageSettings().backCoverAgeBandScale),
+        "--back-cover-qr-scale": String(imageSettings().backCoverQrScale),
+      }}
+    >
       <Show when={imageSettings().backCoverShowLogo}>
         <div class="back-cover-logo-lockup">
           <img class="back-cover-logo" src={logoUrl} alt="Mary Ann Stories logo" />
@@ -5987,17 +6040,22 @@ const App = () => {
       imageSettings().backCoverShowBarcode && resolvedBackCoverBarcodeText().length > 0;
     const showBlurb =
       imageSettings().backCoverShowBlurb && resolvedBackCoverBlurb().length > 0;
+    const offsetX = clampNumber(imageSettings().backCoverOffsetX, -24, 24);
+    const offsetY = clampNumber(imageSettings().backCoverOffsetY, -12, 28);
+    const logoScale = clampNumber(imageSettings().backCoverLogoScale, 0.65, 1.9);
+    const ageScale = clampNumber(imageSettings().backCoverAgeBandScale, 0.65, 1.9);
+    const qrScale = clampNumber(imageSettings().backCoverQrScale, 0.65, 1.9);
     const logoImage = showLogo ? await loadImageElement(logoUrl) : null;
     const qrDataUrl = showQr ? await ensureBackCoverQrDataUrl() : null;
     const qrImage = qrDataUrl ? await loadImageElement(qrDataUrl) : null;
     const imprintWidth = Math.min(canvasWidth * 0.34, 260);
-    const logoWidth = logoImage ? imprintWidth * 0.6 : 0;
+    const logoWidth = logoImage ? imprintWidth * 0.6 * logoScale : 0;
     const logoHeight =
       logoImage && logoWidth > 0
         ? (logoImage.naturalHeight / logoImage.naturalWidth) * logoWidth
         : 0;
-    const x = (canvasWidth - imprintWidth) / 2;
-    let y = Math.max(28, canvasHeight * 0.04);
+    const x = (canvasWidth - imprintWidth) / 2 + (offsetX / 100) * canvasWidth;
+    let y = Math.max(28, canvasHeight * 0.04) + (offsetY / 100) * canvasHeight;
 
     context.save();
     context.textAlign = "center";
@@ -6027,7 +6085,7 @@ const App = () => {
       );
       const sloganLineHeight = Math.max(18, canvasHeight * 0.022);
       for (const line of sloganLines) {
-        context.fillText(line, canvasWidth / 2, y);
+        context.fillText(line, x + imprintWidth / 2, y);
         y += sloganLineHeight;
       }
     }
@@ -6036,21 +6094,21 @@ const App = () => {
       context.font = `500 ${Math.max(12, canvasHeight * 0.015)}px ${getBookLayoutFont("friendly-sans").family}`;
       context.fillStyle = "#72538b";
       y += Math.max(4, canvasHeight * 0.004);
-      context.fillText(resolvedBackCoverTagline(), canvasWidth / 2, y);
+      context.fillText(resolvedBackCoverTagline(), x + imprintWidth / 2, y);
       y += Math.max(18, canvasHeight * 0.022);
     }
 
     if (showAgeBand) {
-      context.font = `700 ${Math.max(13, canvasHeight * 0.017)}px ${getBookLayoutFont("friendly-sans").family}`;
+      context.font = `700 ${Math.max(13, canvasHeight * 0.017) * ageScale}px ${getBookLayoutFont("friendly-sans").family}`;
       context.fillStyle = "#6f4c9f";
       y += Math.max(6, canvasHeight * 0.004);
-      context.fillText(resolvedBackCoverAgeBand().toUpperCase(), canvasWidth / 2, y);
+      context.fillText(resolvedBackCoverAgeBand().toUpperCase(), x + imprintWidth / 2, y);
       y += Math.max(18, canvasHeight * 0.024);
     }
 
     if (qrImage) {
-      const qrSize = Math.max(54, canvasHeight * 0.08);
-      const qrX = (canvasWidth - qrSize) / 2;
+      const qrSize = Math.max(54, canvasHeight * 0.08) * qrScale;
+      const qrX = x + (imprintWidth - qrSize) / 2;
       const qrY = y;
       context.drawImage(qrImage, qrX, qrY, qrSize, qrSize);
       y += qrSize + Math.max(12, canvasHeight * 0.02);
@@ -6555,17 +6613,18 @@ const App = () => {
         <div class="book-layout-art-layer">
           <Show when={sheet.imageUrl} fallback={renderBookEmulatorPlaceholder(sheet)}>
             <img
-              src={
-                buildViewImageUrl(sheet.imageUrl!, {
-                  maxWidth: isSpread ? 1280 : 900,
-                  maxHeight: isSpread ? 820 : 1180,
-                  quality: 64,
-                }) ?? sheet.imageUrl!
-              }
+              src={sheet.previewImageUrl ?? sheet.imageUrl!}
+              data-fullsrc={sheet.imageUrl ?? ""}
               alt={sheet.label}
               loading="lazy"
               decoding="async"
               fetchpriority="low"
+              onError={(event) => {
+                const fallback = event.currentTarget.dataset.fullsrc;
+                if (fallback && event.currentTarget.src !== fallback) {
+                  event.currentTarget.src = fallback;
+                }
+              }}
             />
           </Show>
         </div>
@@ -8983,6 +9042,7 @@ const imageMetaCards = createMemo(() => [
             imageSettings={imageSettings}
             activeLayoutStep={activeLayoutStep}
             activeLayoutImageUrl={activeLayoutImageUrl}
+            activeLayoutFullImageUrl={activeLayoutFullImageUrl}
             activeLayoutPageText={activeLayoutPageText}
             updateFinalStoryPageText={updateFinalStoryPageText}
             builder={builder}
