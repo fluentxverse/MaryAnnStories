@@ -39,6 +39,8 @@ pub fn agent(context: *horizon.Context) horizon.Errors.Horizon!void {
 }
 
 fn respondError(context: *horizon.Context, status: horizon.StatusCode, message: []const u8) horizon.Errors.Horizon!void {
+    logRouteError(context, status, message, null);
+
     var buffer = std.ArrayList(u8).init(context.allocator);
     defer buffer.deinit();
 
@@ -54,6 +56,8 @@ fn respondErrorWithDetail(
     message: []const u8,
     detail: []const u8,
 ) horizon.Errors.Horizon!void {
+    logRouteError(context, status, message, detail);
+
     var buffer = std.ArrayList(u8).init(context.allocator);
     defer buffer.deinit();
 
@@ -61,6 +65,29 @@ fn respondErrorWithDetail(
 
     context.response.setStatus(status);
     try context.response.json(buffer.items);
+}
+
+fn logRouteError(
+    context: *horizon.Context,
+    status: horizon.StatusCode,
+    message: []const u8,
+    detail: ?[]const u8,
+) void {
+    if (detail) |value| {
+        std.log.err("[agent] {s} {s}: {s} ({s})", .{
+            @tagName(context.request.method),
+            @tagName(status),
+            message,
+            value,
+        });
+        return;
+    }
+
+    std.log.err("[agent] {s} {s}: {s}", .{
+        @tagName(context.request.method),
+        @tagName(status),
+        message,
+    });
 }
 
 const ErrorPayload = struct {

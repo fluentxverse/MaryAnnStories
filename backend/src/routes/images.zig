@@ -139,15 +139,15 @@ pub fn generate(context: *horizon.Context) horizon.Errors.Horizon!void {
         if (reference_images) |image_refs| {
             for (image_refs) |image_ref| {
                 if (image_ref.len == 0) continue;
-                const rewritten_reference: ?[]u8 = rewriteSeaweedPublicUrlToInternal(
+                const normalized_reference: ?[]u8 = normalizeSeaweedImageReference(
                     context.allocator,
                     app.seaweed.public_url,
                     app.seaweed.filer_endpoint,
                     image_ref,
                 ) catch null;
-                defer if (rewritten_reference) |value| context.allocator.free(value);
+                defer if (normalized_reference) |value| context.allocator.free(value);
 
-                const effective_reference = rewritten_reference orelse image_ref;
+                const effective_reference = normalized_reference orelse image_ref;
                 const payload = loadImagePayload(context.allocator, effective_reference) catch |err| {
                     try respondErrorWithDetail(context, .bad_request, "Unable to read reference image", @errorName(err));
                     return;
@@ -160,15 +160,15 @@ pub fn generate(context: *horizon.Context) horizon.Errors.Horizon!void {
             }
         } else if (reference_image) |image_ref| {
             if (image_ref.len > 0) {
-                const rewritten_reference: ?[]u8 = rewriteSeaweedPublicUrlToInternal(
+                const normalized_reference: ?[]u8 = normalizeSeaweedImageReference(
                     context.allocator,
                     app.seaweed.public_url,
                     app.seaweed.filer_endpoint,
                     image_ref,
                 ) catch null;
-                defer if (rewritten_reference) |value| context.allocator.free(value);
+                defer if (normalized_reference) |value| context.allocator.free(value);
 
-                const effective_reference = rewritten_reference orelse image_ref;
+                const effective_reference = normalized_reference orelse image_ref;
                 const payload = loadImagePayload(context.allocator, effective_reference) catch |err| {
                     try respondErrorWithDetail(context, .bad_request, "Unable to read reference image", @errorName(err));
                     return;
@@ -840,6 +840,8 @@ fn extractGeminiBase64(value: std.json.Value) ?[]const u8 {
 }
 
 fn respondError(context: *horizon.Context, status: horizon.StatusCode, message: []const u8) horizon.Errors.Horizon!void {
+    logRouteError(context, status, message, null);
+
     var buffer = std.ArrayList(u8).init(context.allocator);
     defer buffer.deinit();
 
@@ -854,12 +856,37 @@ fn respondErrorWithDetail(
     message: []const u8,
     detail: []const u8,
 ) horizon.Errors.Horizon!void {
+    logRouteError(context, status, message, detail);
+
     var buffer = std.ArrayList(u8).init(context.allocator);
     defer buffer.deinit();
 
     try std.json.stringify(.{ .@"error" = message, .detail = detail }, .{}, buffer.writer());
     context.response.setStatus(status);
     try context.response.json(buffer.items);
+}
+
+fn logRouteError(
+    context: *horizon.Context,
+    status: horizon.StatusCode,
+    message: []const u8,
+    detail: ?[]const u8,
+) void {
+    if (detail) |value| {
+        std.log.err("[images] {s} {s}: {s} ({s})", .{
+            @tagName(context.request.method),
+            @tagName(status),
+            message,
+            value,
+        });
+        return;
+    }
+
+    std.log.err("[images] {s} {s}: {s}", .{
+        @tagName(context.request.method),
+        @tagName(status),
+        message,
+    });
 }
 
 fn buildPublicUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []const u8) ?[]u8 {

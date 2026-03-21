@@ -271,12 +271,37 @@ fn respondSessionStatus(
 }
 
 fn respondError(context: *horizon.Context, status: horizon.StatusCode, message: []const u8) horizon.Errors.Horizon!void {
+    logRouteError(context, status, message, null);
+
     var buffer = std.ArrayList(u8).init(context.allocator);
     defer buffer.deinit();
 
     try std.json.stringify(ErrorResponse{ .@"error" = message }, .{}, buffer.writer());
     context.response.setStatus(status);
     try context.response.json(buffer.items);
+}
+
+fn logRouteError(
+    context: *horizon.Context,
+    status: horizon.StatusCode,
+    message: []const u8,
+    detail: ?[]const u8,
+) void {
+    if (detail) |value| {
+        std.log.err("[auth] {s} {s}: {s} ({s})", .{
+            @tagName(context.request.method),
+            @tagName(status),
+            message,
+            value,
+        });
+        return;
+    }
+
+    std.log.err("[auth] {s} {s}: {s}", .{
+        @tagName(context.request.method),
+        @tagName(status),
+        message,
+    });
 }
 
 fn isValidUsername(username: []const u8) bool {
