@@ -2626,6 +2626,11 @@ const getFinalAudienceGuardrailLine = (
     ? "Adult content is permitted when the story premise clearly calls for it. Do not add child-safety softening unless the user asks for it."
     : "Keep the tone safe and warm for children.";
 
+const getReadingLevelLine = (state: Pick<BuilderState, "explicitContentEnabled" | "ageBand">) =>
+  isExplicitContentEnabled(state)
+    ? ""
+    : "Use simple, age-appropriate English with short sentences, familiar words, and clear phrasing. Avoid complex vocabulary, idioms, or dense clauses.";
+
 const buildImageCastLine = (state: BuilderState) => {
   const protagonistGender = normalizeGenderLabel(state.protagonistGender);
   const protagonistCreature = normalizeWhitespace(state.creatureType).toLowerCase();
@@ -3796,6 +3801,7 @@ const buildDraftPrompt = (state: BuilderState, plan: StoryPlan) => {
   const { castLine } = buildCastFromState(state);
   const spreadCount = Math.max(6, Math.min(16, state.spreads));
   const artDirection = buildArtDirectionParts(state).join("; ");
+  const readingLevel = getReadingLevelLine(state);
 
   return [
     getStoryPlannerRoleLine(state),
@@ -3824,6 +3830,7 @@ const buildDraftPrompt = (state: BuilderState, plan: StoryPlan) => {
     `Illustration consistency: ${state.illustrationConsistency}`,
     `Safety constraints: ${state.safetyConstraints}`,
     getDraftAudienceGuardrailLine(state),
+    ...(readingLevel ? [readingLevel] : []),
     `Spreads: ${spreadCount}`,
     `Draft context: ${plan.synopsis}`,
     "Respond with JSON only. No markdown.",
@@ -3834,6 +3841,7 @@ const buildFinalPrompt = (state: BuilderState, plan: StoryPlan) => {
   const spreadCount = Math.max(6, Math.min(16, state.spreads));
   const beats = plan.storyBeats.map((beat, index) => `${index + 1}. ${beat}`).join(" ");
   const { extraCharacters } = buildCastFromState(state);
+  const readingLevel = getReadingLevelLine(state);
 
   return [
     "Write the final story in full.",
@@ -3853,6 +3861,7 @@ const buildFinalPrompt = (state: BuilderState, plan: StoryPlan) => {
     `Safety constraints: ${state.safetyConstraints}`,
     `Story beats: ${beats}`,
     getFinalAudienceGuardrailLine(state),
+    ...(readingLevel ? [readingLevel] : []),
     "Respond with JSON only. No markdown.",
   ].join("\n");
 };
