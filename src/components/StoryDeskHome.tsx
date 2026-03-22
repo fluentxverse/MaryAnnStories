@@ -125,7 +125,11 @@ export default function StoryDeskHome(props: any) {
                     props.homeShelfTab() === "private"
                   }
                 >
-                  <button class="button primary" type="button" onClick={props.openStudio}>
+                  <button
+                    class="button primary"
+                    type="button"
+                    onClick={props.requestCreateNewStory}
+                  >
                     Start first draft
                   </button>
                 </Show>
@@ -198,7 +202,11 @@ export default function StoryDeskHome(props: any) {
               <p class="story-spotlight-summary">
                 Start a new draft in the studio to build your first story entry.
               </p>
-              <button class="button primary" type="button" onClick={props.openStudio}>
+              <button
+                class="button primary"
+                type="button"
+                onClick={props.requestCreateNewStory}
+              >
                 Start drafting
               </button>
             </article>
@@ -363,6 +371,13 @@ export default function StoryDeskHome(props: any) {
                       </div>
                     }
                   >
+                    <button
+                      class="button primary"
+                      type="button"
+                      onClick={props.requestCreateNewStory}
+                    >
+                      Create new story
+                    </button>
                     <button
                       class="button ghost"
                       type="button"

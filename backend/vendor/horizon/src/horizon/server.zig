@@ -187,24 +187,27 @@ pub const Server = struct {
 
             // Read request body if present.
             if (request.head.method.requestHasBody()) {
+                const max_body = 128 * 1024 * 1024;
                 const reader = try request.reader();
 
                 if (request.head.content_length) |len| {
                     const body_len = std.math.cast(usize, len) orelse return error.RequestBodyTooLarge;
+                    if (body_len > max_body) {
+                        return error.RequestBodyTooLarge;
+                    }
                     if (body_len > 0) {
                         const body_buffer = try self.allocator.alloc(u8, body_len);
                         errdefer self.allocator.free(body_buffer);
 
-                        const read_len = try reader.readAll(body_buffer);
-                        req.body = body_buffer[0..read_len];
-                        req.body_allocated = true;
+                        try reader.readNoEof(body_buffer);
+                        req.body = body_buffer;
+                        req.body_allocation = body_buffer;
                     }
                 } else {
-                    const max_body = 8 * 1024 * 1024;
                     const body_buffer = try reader.readAllAlloc(self.allocator, max_body);
                     if (body_buffer.len > 0) {
                         req.body = body_buffer;
-                        req.body_allocated = true;
+                        req.body_allocation = body_buffer;
                     } else {
                         self.allocator.free(body_buffer);
                     }

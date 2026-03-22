@@ -11,7 +11,7 @@ pub const Request = struct {
     uri: []const u8,
     headers: std.StringHashMap([]const u8),
     body: []const u8,
-    body_allocated: bool = false, // Whether body was dynamically allocated
+    body_allocation: ?[]u8 = null, // Tracks the original body allocation, if any
     query_params: std.StringHashMap([]const u8),
     path_params: std.StringHashMap([]const u8),
     context: std.StringHashMap(*anyopaque), // Generic context (used by middlewares)
@@ -36,9 +36,9 @@ pub const Request = struct {
         self.query_params.deinit();
         self.path_params.deinit();
         self.context.deinit();
-        // Free body if it was dynamically allocated
-        if (self.body_allocated) {
-            self.allocator.free(self.body);
+        // Free the original body allocation, even if self.body points at a subslice.
+        if (self.body_allocation) |body_buffer| {
+            self.allocator.free(body_buffer);
         }
     }
 

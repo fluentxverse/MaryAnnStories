@@ -1783,6 +1783,36 @@ const normalizeImageResultsSnapshot = (
   return results;
 };
 
+const serializeImageResultsForSave = (
+  results: Record<string, ImageStepResult>,
+): Record<string, ImageStepResult> => {
+  const serialized: Record<string, ImageStepResult> = {};
+
+  for (const [key, entry] of Object.entries(results)) {
+    if (!entry || typeof entry !== "object") continue;
+
+    const storedUrl = normalizeClientImageUrl(
+      typeof entry.storedUrl === "string" ? entry.storedUrl : undefined,
+    );
+    const imageUrl = normalizeClientImageUrl(
+      typeof entry.imageUrl === "string" ? entry.imageUrl : undefined,
+    );
+    const persistedImageUrl =
+      storedUrl ?? (imageUrl && !imageUrl.startsWith("data:") ? imageUrl : undefined);
+
+    if (!persistedImageUrl && !storedUrl) continue;
+
+    serialized[key] = {
+      status: storedUrl ? "saved" : entry.status === "saved" ? "generated" : entry.status,
+      imageUrl: persistedImageUrl,
+      storedUrl,
+      generatedAt: typeof entry.generatedAt === "string" ? entry.generatedAt : undefined,
+    };
+  }
+
+  return serialized;
+};
+
 const resolveStoryStatus = (
   status: string,
   ready: boolean,
@@ -4101,6 +4131,7 @@ const App = () => {
   const [unsavedBusy, setUnsavedBusy] = createSignal(false);
   const [pendingWorkspace, setPendingWorkspace] = createSignal<WorkspaceView | null>(null);
   const [pendingStory, setPendingStory] = createSignal<StoryDeskEntry | null>(null);
+  const [pendingCreateStory, setPendingCreateStory] = createSignal(false);
   const [routeStoryId, setRouteStoryId] = createSignal<string | null>(null);
   const [routeTargetTab, setRouteTargetTab] = createSignal<WorkspaceTab | null>(null);
   const [routeTargetView, setRouteTargetView] = createSignal<WorkspaceView | null>(null);
@@ -4120,6 +4151,7 @@ const App = () => {
   const [backCoverQrDataUrl, setBackCoverQrDataUrl] = createSignal<string | null>(null);
   const [isBookEmulatorFullscreen, setIsBookEmulatorFullscreen] = createSignal(false);
   const [explicitContentConfirmOpen, setExplicitContentConfirmOpen] = createSignal(false);
+  const [studioSelectionDetached, setStudioSelectionDetached] = createSignal(false);
 
   let autosaveTimer: number | undefined;
   let lastSavedSnapshot = "";
@@ -5094,12 +5126,41 @@ const App = () => {
   const clearPendingAction = () => {
     setPendingWorkspace(null);
     setPendingStory(null);
+    setPendingCreateStory(false);
+  };
+
+  const openFreshStoryWorkspace = () => {
+    setHomeShelfTab("private");
+    setPublishedPreviewPageIndex(0);
+    resetStudioState({
+      preserveSelection: true,
+      detachFromSelection: true,
+    });
+    setActiveWorkspace("studio");
+    setActiveTab("request");
+  };
+
+  const requestCreateNewStory = () => {
+    if (hasTouched()) {
+      setPendingCreateStory(true);
+      setPendingStory(null);
+      setPendingWorkspace(null);
+      setUnsavedConfirmOpen(true);
+      return;
+    }
+    clearPendingAction();
+    openFreshStoryWorkspace();
   };
 
   const proceedPendingAction = () => {
     const story = pendingStory();
     const workspace = pendingWorkspace();
+    const createStory = pendingCreateStory();
     clearPendingAction();
+    if (createStory) {
+      openFreshStoryWorkspace();
+      return;
+    }
     if (story) {
       openStoryDeskEntry(story);
       return;
@@ -5119,13 +5180,17 @@ const App = () => {
   };
 
   const discardUnsavedChanges = () => {
-    if (!pendingStory()) {
+    if (!pendingStory() && !pendingCreateStory()) {
       const candidateId = activeStoryId() ?? selectedStoryId();
       const entry = storyDeskEntries().find((item) => item.id === candidateId);
       if (entry) {
         applyStoryDeskEntry(entry, { activateWorkspace: false });
       } else {
-        resetStudioState({ preserveSelection: true, preserveTab: true });
+        resetStudioState({
+          preserveSelection: true,
+          preserveTab: true,
+          detachFromSelection: true,
+        });
       }
     }
     setHasTouched(false);
@@ -5149,6 +5214,7 @@ const App = () => {
     entry: StoryDeskEntry,
     options?: { activateWorkspace?: boolean; tab?: WorkspaceTab },
   ) => {
+    setStudioSelectionDetached(false);
     setSelectedStoryId(entry.id);
     setBuilder(cloneBuilder(entry.builderSnapshot));
     setImageSettings(cloneImageSettings(entry.imageSettingsSnapshot));
@@ -5552,6 +5618,7 @@ const App = () => {
 
   createEffect(() => {
     if (activeWorkspace() !== "studio") return;
+    if (studioSelectionDetached()) return;
     if (hasTouched()) return;
     const selected = selectedStoryId();
     if (!selected) return;
@@ -6863,6 +6930,7 @@ const imageMetaCards = createMemo(() => [
   const buildStoryPayload = (id: string) => {
     const plan = storyPlan();
     const state = builder();
+    const persistedImageResults = serializeImageResultsForSave(imageStepResults());
     const ready = readyForPublish();
     const published = isPublished();
     const baseStatus = hasFinalGenerated()
@@ -6886,7 +6954,7 @@ const imageMetaCards = createMemo(() => [
       story_plan: plan,
       final_story: finalStory(),
       draft_response_text: draftResponseText(),
-      image_results: imageStepResults(),
+      image_results: persistedImageResults,
     };
   };
 
@@ -6931,6 +6999,7 @@ const imageMetaCards = createMemo(() => [
       setLastSavedAtRaw(updatedAtRaw);
       setLastSavedAt(formatTimestamp(updatedAtRaw));
       upsertStoryDeskEntry(buildStoryDeskEntryFromState(id, updatedAtRaw));
+      setStudioSelectionDetached(false);
       setSelectedStoryId(id);
       setHasTouched(false);
       lastSavedSnapshot = options?.snapshot ?? buildAutosaveSnapshot();
@@ -6968,7 +7037,9 @@ const imageMetaCards = createMemo(() => [
   const resetStudioState = (options?: {
     preserveSelection?: boolean;
     preserveTab?: boolean;
+    detachFromSelection?: boolean;
   }) => {
+    setStudioSelectionDetached(Boolean(options?.detachFromSelection));
     setBuilder(cloneBuilder(resetState));
     setImageSettings(cloneImageSettings(initialImageSettings));
     setHasGenerated(false);
@@ -7025,7 +7096,10 @@ const imageMetaCards = createMemo(() => [
 
   const handleReset = () => {
     setResetConfirmOpen(false);
-    resetStudioState();
+    resetStudioState({
+      preserveSelection: true,
+      detachFromSelection: true,
+    });
   };
 
   const applyImageResetLocally = () => {
@@ -7671,13 +7745,22 @@ const imageMetaCards = createMemo(() => [
           <Show
             when={activeWorkspace() === "studio"}
             fallback={
-              <button
-                class="button primary"
-                type="button"
-                onClick={openStudio}
-              >
-                Open studio
-              </button>
+              <>
+                <button
+                  class="button primary"
+                  type="button"
+                  onClick={requestCreateNewStory}
+                >
+                  Create new story
+                </button>
+                <button
+                  class="button ghost"
+                  type="button"
+                  onClick={openStudio}
+                >
+                  Open studio
+                </button>
+              </>
             }
           >
             <div class={`status-badge ${requestStateTone()}`}>{requestState()}</div>
@@ -7692,6 +7775,13 @@ const imageMetaCards = createMemo(() => [
                 </span>
               )}
             </Show>
+            <button
+              class="button ghost"
+              type="button"
+              onClick={requestCreateNewStory}
+            >
+              Create new story
+            </button>
             <button
               class="button ghost"
               type="button"
@@ -7734,6 +7824,7 @@ const imageMetaCards = createMemo(() => [
             activeHomeCounts={activeHomeCounts}
             activeHomeError={activeHomeError}
             filteredStoryDeskEntries={filteredStoryDeskEntries}
+            requestCreateNewStory={requestCreateNewStory}
             openStudio={openStudio}
             setStoryDeskScrollEl={setStoryDeskScrollEl}
             selectedStoryId={selectedStoryId}
@@ -8896,7 +8987,8 @@ const imageMetaCards = createMemo(() => [
               <p class="panel-kicker">Reset studio</p>
               <h3>Are you sure you want to reset?</h3>
               <p class="subtle-text">
-                Your current work in the studio will be lost.
+                Your current studio session will be cleared. Stories already saved in the
+                desk will stay untouched.
               </p>
             </div>
             <div class="confirm-actions">
