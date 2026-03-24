@@ -1745,15 +1745,24 @@ const normalizeStoryPlanSnapshot = (
   };
 };
 
+const sanitizeFinalStoryText = (value: string) =>
+  normalizeWhitespace(value)
+    .replace(/[—–―]/g, "-")
+    .replace(/\s+-\s+/g, " - ");
+
 const normalizeFinalStorySnapshot = (
   value: string | null | undefined,
 ): FinalStorySnapshot | null => {
   const parsed = safeParseJson<FinalStorySnapshot | null>(value, null);
   if (!parsed) return null;
   return {
-    title: parsed.title ?? "Untitled story",
-    subtitle: parsed.subtitle ?? "",
-    pages: Array.isArray(parsed.pages) ? parsed.pages : [],
+    title: sanitizeFinalStoryText(parsed.title ?? "Untitled story"),
+    subtitle: sanitizeFinalStoryText(parsed.subtitle ?? ""),
+    pages: Array.isArray(parsed.pages)
+      ? parsed.pages
+          .filter((page) => typeof page === "string")
+          .map((page) => sanitizeFinalStoryText(page))
+      : [],
   };
 };
 
@@ -3179,6 +3188,9 @@ const buildPagePrompt = (
     mirrorIntegrityCue,
     setting ? `Overall setting: ${setting}.` : "",
     image.castLine ? `Keep the same cast from the cover: ${image.castLine}.` : "",
+    image.castLine
+      ? "Show only the listed cast members in this scene. Do not add extra children, bystanders, or additional characters."
+      : "",
     /\bbow to (?:their|the) (?:own )?reflections\b/.test(currentPageLower)
       ? "Translate this page into one clean final-practice moment: two children finishing the routine, giving small bows toward a single wall mirror, with calm proud expressions."
       : "Translate the story prose into specific physical details: location, props, body positions, expressions, and background action.",
@@ -3435,17 +3447,19 @@ const parseFinalStoryFromText = (text: string, fallback: FinalStorySnapshot) => 
   }
 
   const pages = Array.isArray(parsed.pages)
-    ? parsed.pages.filter((item) => typeof item === "string" && item.trim().length > 0)
+    ? parsed.pages
+        .filter((item) => typeof item === "string" && item.trim().length > 0)
+        .map((item) => sanitizeFinalStoryText(item))
     : [];
 
   return {
     title:
       typeof parsed.title === "string" && parsed.title.trim().length > 0
-        ? parsed.title
+        ? sanitizeFinalStoryText(parsed.title)
         : fallback.title,
     subtitle:
       typeof parsed.subtitle === "string" && parsed.subtitle.trim().length > 0
-        ? parsed.subtitle
+        ? sanitizeFinalStoryText(parsed.subtitle)
         : fallback.subtitle,
     pages: pages.length > 0 ? pages : fallback.pages,
   };
@@ -3892,6 +3906,7 @@ const buildFinalPrompt = (state: BuilderState, plan: StoryPlan) => {
     `Story beats: ${beats}`,
     getFinalAudienceGuardrailLine(state),
     ...(readingLevel ? [readingLevel] : []),
+    "Use only plain ASCII punctuation. Do not use em dashes or en dashes anywhere; use a normal hyphen only if needed.",
     "Respond with JSON only. No markdown.",
   ].join("\n");
 };
@@ -4037,9 +4052,9 @@ const buildFinalStory = (state: BuilderState, story: StoryPlan): FinalStorySnaps
   }
 
   return {
-    title: story.title,
-    subtitle: story.metadataLine,
-    pages,
+    title: sanitizeFinalStoryText(story.title),
+    subtitle: sanitizeFinalStoryText(story.metadataLine),
+    pages: pages.map((page) => sanitizeFinalStoryText(page)),
   };
 };
 

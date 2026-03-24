@@ -284,6 +284,8 @@ fn sendRequest(
     url: []const u8,
     payload: []const u8,
 ) ![]u8 {
+    const max_response_size = 32 * 1024 * 1024;
+
     var headers = std.ArrayList(std.http.Header).init(allocator);
     defer headers.deinit();
 
@@ -306,7 +308,7 @@ fn sendRequest(
             .payload = payload,
             .extra_headers = headers.items,
             .response_storage = .{ .dynamic = &response_body },
-            .max_append_size = 8 * 1024 * 1024,
+            .max_append_size = max_response_size,
         });
 
         const should_retry =
