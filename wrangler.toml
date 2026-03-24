@@ -1,4 +1,4 @@
-name = "mary-ann-stories"
+name = "maryannstories"
 main = "cloudflare/worker.ts"
 compatibility_date = "2026-03-20"
 
